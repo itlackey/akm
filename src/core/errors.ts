@@ -221,6 +221,9 @@ export const NOT_FOUND_ERROR_CODES = [
   // A website answered, but not with a page: HTTP 4xx other than 404 and 429 (a 403 refusal, say), too many
   // redirects, or a redirect with no Location (`src/sources/snapshot-fetchers/`).
   "WEBSITE_REFUSED",
+  // A website answered, but akm found no page it could take: a 404, a page over the size cap, or a crawl that kept
+  // nothing (`src/sources/snapshot-fetchers/website-ingest.ts`).
+  "WEBSITE_NO_CONTENT",
 ] as const;
 export type NotFoundErrorCode = (typeof NOT_FOUND_ERROR_CODES)[number];
 
@@ -357,6 +360,7 @@ const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
     "Check the ref's spelling and version; `akm search <query> --from registry` lists installable refs.",
   WEBSITE_REFUSED:
     "The website refused the request. Check the bundle's URL (`akm bundle list`) and that the site allows it.",
+  WEBSITE_NO_CONTENT: "The website had no page akm could import. Check the URL opens a page in a browser.",
 };
 
 /**

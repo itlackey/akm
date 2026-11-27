@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isWithin, ResponseTooLargeError, readBodyWithByteCap, resolveStashDir, todayIso } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { warn, warnOnce, warnVerbose } from "../../core/warn";
 import { withFreshnessCache } from "../freshness";
 import { sanitizeString } from "../providers/provider-utils";
@@ -469,7 +469,7 @@ async function scrapeWebsiteToStash(
 
   const pages = await crawlWebsite(startUrl, options);
   if (pages.length === 0) {
-    throw new Error(`No content could be scraped from ${startUrl}`);
+    throw new NotFoundError(`No content could be scraped from ${startUrl}`, "WEBSITE_NO_CONTENT");
   }
 
   const staging = beginSnapshotStaging(stashDir);
@@ -547,7 +547,7 @@ export async function fetchWebsiteMarkdownSnapshot(
     allowPrivateHosts,
     signal: options?.signal,
   });
-  if (!fetched) throw new UsageError(`No content could be fetched from ${normalizedUrl}`);
+  if (!fetched) throw new NotFoundError(`No content could be fetched from ${normalizedUrl}`, "WEBSITE_NO_CONTENT");
 
   return websiteMarkdownSnapshotFromResult({
     url: fetched.page.url,

@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The usage report's `failures` counts only runs that ended in an error. A health warning (exit 4, `out_health-warning`) or a cancellation (`out_cancelled`) is still counted as its outcome but is no longer a failure; 148 of `akm doctor`'s 149 reported failures were warnings. Days not yet reported are counted from their outcomes, so they are corrected too.
 - A scheduled run is recorded as source `task`: `akm task dispatch`, and `akm task run --scheduled` from a scheduler row without `AKM_EVENT_SOURCE`, were `unknown`.
-- A website bundle's fetch failure no longer exits 70 (internal), which counted a site's refusal as an akm bug. An HTTP 429 or 5xx, a timeout, a failed connection or a failed DNS lookup is `WEBSITE_UNREACHABLE` (exit 75, retry); an HTTP 403 or other 4xx, a redirect loop or a redirect with no Location is `WEBSITE_REFUSED` (exit 1).
+- A website bundle's fetch failure no longer exits 70 (internal), which counted a site's refusal as an akm bug. An HTTP 429 or 5xx, a timeout, a failed connection or a failed DNS lookup is `WEBSITE_UNREACHABLE` (exit 75, retry); an HTTP 403 or other 4xx, a redirect loop or a redirect with no Location is `WEBSITE_REFUSED` (exit 1). A site with no page akm can take (a 404, a page over the size cap, or a crawl that kept nothing) is `WEBSITE_NO_CONTENT` (exit 1): `akm import <url>` reported it as `INVALID_FLAG_VALUE` (exit 2) with a hint to check the flags, and a website bundle's empty crawl exited 70.
 
 ### Deprecated
 
