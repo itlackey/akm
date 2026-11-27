@@ -8,9 +8,11 @@
  *
  * A host in dispatch mode holds one row, `akm task dispatch` every minute ({@link DISPATCH_BINDING}), instead of a
  * row per schedule entry. The mode is what the installed rows show: this installation's dispatch row is installed or
- * it is not. Every row a sync writes names this installation's working stash (`AKM_BUNDLE_DIR`), which is how its rows
- * are told from another installation's. A host never holds both kinds of row: switching removes one kind before it
- * writes the other, and a write after a failed removal is held.
+ * it is not. A per-task row names this installation's working stash (`AKM_BUNDLE_DIR`), which is how its rows are told
+ * from another installation's. The dispatch row names no stash: `akm task dispatch` reads the config, and an
+ * installation is its config, so the row is told apart by the config directory or file it carries, none for the
+ * default one. A host never holds both kinds of row: switching removes one kind before it writes the other, and a
+ * write after a failed removal is held.
  */
 
 import { UsageError } from "../core/errors";
@@ -22,6 +24,7 @@ import {
   type SchedulerBinding,
   type SchedulerInstallOptions,
 } from "./scheduler-binding";
+import type { ScheduledRowEnvironment } from "./scheduler-invocation";
 import {
   installedRowNativeId,
   installedRowOwner,
@@ -41,18 +44,41 @@ export interface SchedulerMode {
   readonly taskRows: InstalledSchedulerBinding[];
 }
 
+/** The config a row's installation reads: its `AKM_CONFIG_FILE` or `AKM_CONFIG_DIR`, undefined for the default one. */
+function configOf(environment: ScheduledRowEnvironment | undefined): string | undefined {
+  return environment?.AKM_CONFIG_FILE ?? environment?.AKM_CONFIG_DIR;
+}
+
+/**
+ * The environment the dispatch row sets: the sync's own without `AKM_BUNDLE_DIR`, which is Deprecated, unless the
+ * syncing process was given it, as the stash it still selects that way.
+ */
+function dispatchRowEnvironment(
+  environment: ScheduledRowEnvironment | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): ScheduledRowEnvironment | undefined {
+  if (environment === undefined || env.AKM_BUNDLE_DIR?.trim()) return environment;
+  const { AKM_BUNDLE_DIR: _derived, ...rest } = environment;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
 /** The mode a sync works in: `requested` (`--dispatch` / `--no-dispatch`), else the one the installed rows show. */
 export function schedulerModeOf(
   rows: readonly InstalledSchedulerBinding[],
-  ownBundleDir: string | undefined,
+  ownEnvironment: ScheduledRowEnvironment | undefined,
   requested: boolean | undefined,
 ): SchedulerMode {
   const dispatchRow = rows.find(isDispatchRow);
-  const ownDispatchRow = dispatchRow?.ownerBundlePath === ownBundleDir ? dispatchRow : undefined;
+  const ownDispatchRow =
+    dispatchRow !== undefined && configOf(dispatchRow.environment) === configOf(ownEnvironment)
+      ? dispatchRow
+      : undefined;
   const dispatch = requested ?? ownDispatchRow !== undefined;
   if (dispatch && dispatchRow !== undefined && ownDispatchRow === undefined) {
+    const config = configOf(dispatchRow.environment);
+    const owner = config === undefined ? "the default config" : JSON.stringify(config);
     throw new UsageError(
-      `Scheduler id "dispatch" is already scheduled from ${installedRowOwner(dispatchRow)}; one installation per user can use dispatch mode. Run this installation without \`--dispatch\`.`,
+      `Scheduler id "dispatch" is already scheduled by the installation that reads ${owner}; one installation per user can use dispatch mode. Run this installation without \`--dispatch\`.`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -118,13 +144,12 @@ export function planDispatchMode(input: DispatchModeInput): ModePlan {
     Object.freeze({ kind: "remove" as const, id: row.id, nativeId: installedRowNativeId(row) }),
   );
   const current = mode.ownDispatchRow;
-  const options: SchedulerInstallOptions =
-    current !== undefined && !input.rebind
-      ? {
-          binding: [...current.binding],
-          ...(input.installOptions.environment !== undefined ? { environment: input.installOptions.environment } : {}),
-        }
-      : input.installOptions;
+  const environment = dispatchRowEnvironment(input.installOptions.environment);
+  const binding = current !== undefined && !input.rebind ? current.binding : input.installOptions.binding;
+  const options: SchedulerInstallOptions = {
+    ...(binding !== undefined ? { binding: [...binding] } : {}),
+    ...(environment !== undefined ? { environment } : {}),
+  };
   const expected = input.sched.expectedSignature?.(DISPATCH_BINDING, options);
   const kind =
     current === undefined ? "install" : expected === undefined || current.signature === expected ? undefined : "update";

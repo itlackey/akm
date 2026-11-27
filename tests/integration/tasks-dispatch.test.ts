@@ -17,17 +17,21 @@ import { akmTasksEnable, akmTasksSync } from "../../src/commands/tasks/tasks";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../../src/tasks/backends/types";
 import { parseSchedule } from "../../src/tasks/schedule";
 import { type SchedulerBinding, schedulerBindingNativeId } from "../../src/tasks/scheduler-binding";
+import type { ScheduledRowEnvironment } from "../../src/tasks/scheduler-invocation";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
-/** Rows by native id, each with the working stash it names. */
-let rows: Map<string, { binding: SchedulerBinding; bundleDir: string }>;
+/** Rows by native id, each with the environment it sets inline. */
+let rows: Map<string, { binding: SchedulerBinding; environment?: ScheduledRowEnvironment }>;
 let failUninstall: Set<string>;
 
 const backend: SchedulerBackend = {
   name: "cron",
-  install(binding: SchedulerBinding) {
-    rows.set(schedulerBindingNativeId(binding), { binding, bundleDir: storage.stashDir });
+  install(binding, options) {
+    rows.set(schedulerBindingNativeId(binding), {
+      binding,
+      ...(options?.environment ? { environment: options.environment } : {}),
+    });
   },
   uninstall(nativeId: string) {
     if (failUninstall.has(nativeId)) throw new Error(`injected failure removing ${nativeId}`);
@@ -35,17 +39,28 @@ const backend: SchedulerBackend = {
   },
   setEnabled() {},
   list(): InstalledSchedulerBinding[] {
-    return [...rows.entries()].map(([nativeId, { binding, bundleDir }]) => ({
+    return [...rows.entries()].map(([nativeId, { binding, environment }]) => ({
       id: binding.id,
       nativeId,
       binding: ["/test/akm"],
-      environment: { AKM_BUNDLE_DIR: bundleDir },
+      ...(environment ? { environment } : {}),
       invocation: binding.invocation,
       signature: JSON.stringify([binding.cron, binding.invocation]),
     }));
   },
   expectedSignature: (binding: SchedulerBinding) => JSON.stringify([binding.cron, binding.invocation]),
 };
+
+/** Run `fn` as a host that selects its stash by `defaultBundle` alone; the sandbox sets `AKM_BUNDLE_DIR`. */
+async function withoutBundleDirVariable(fn: () => Promise<void>): Promise<void> {
+  const saved = process.env.AKM_BUNDLE_DIR;
+  delete process.env.AKM_BUNDLE_DIR;
+  try {
+    await fn();
+  } finally {
+    process.env.AKM_BUNDLE_DIR = saved;
+  }
+}
 
 const invocations = () => [...rows.values()].map(({ binding }) => binding.invocation.join(" ")).sort();
 
@@ -91,6 +106,41 @@ describe("sync --dispatch", () => {
     expect(rows.get("dispatch")?.binding.cron).toBe("*/1 * * * *");
   });
 
+  test("the dispatch row names no working stash when the stash comes from defaultBundle", async () => {
+    await withoutBundleDirVariable(async () => {
+      await akmTasksSync({ backend });
+      expect(rows.get("hourly")?.environment?.AKM_BUNDLE_DIR).toBe(path.resolve(storage.stashDir));
+      await akmTasksSync({ backend }, undefined, { dispatch: true });
+      expect(rows.get("dispatch")?.environment?.AKM_BUNDLE_DIR).toBeUndefined();
+    });
+  });
+
+  test("the dispatch row keeps an AKM_BUNDLE_DIR the syncing process was given: the stash it still selects", async () => {
+    await akmTasksSync({ backend }, undefined, { dispatch: true });
+    expect(rows.get("dispatch")?.environment?.AKM_BUNDLE_DIR).toBe(path.resolve(storage.stashDir));
+  });
+
+  test("a dispatch row an older sync wrote with AKM_BUNDLE_DIR is this installation's and is rewritten without it", () =>
+    withoutBundleDirVariable(async () => {
+      await akmTasksSync({ backend }, undefined, { dispatch: true });
+      const dispatch = rows.get("dispatch") as { binding: SchedulerBinding; environment?: ScheduledRowEnvironment };
+      rows.set("dispatch", { ...dispatch, environment: { ...dispatch.environment, AKM_BUNDLE_DIR: storage.stashDir } });
+      const backendWithEnv: SchedulerBackend = {
+        ...backend,
+        expectedSignature: (binding, options) =>
+          JSON.stringify([binding.cron, binding.invocation, options?.environment]),
+      };
+      const listed = backend.list;
+      backendWithEnv.list = () =>
+        (listed() as InstalledSchedulerBinding[]).map((row) => ({
+          ...row,
+          signature: JSON.stringify([rows.get(row.nativeId as string)?.binding.cron, row.invocation, row.environment]),
+        }));
+      const result = await akmTasksSync({ backend: backendWithEnv });
+      expect(result.updated).toEqual(["dispatch"]);
+      expect(rows.get("dispatch")?.environment?.AKM_BUNDLE_DIR).toBeUndefined();
+    }));
+
   test("later syncs, and enabling another task, keep dispatch mode", async () => {
     await akmTasksSync({ backend }, undefined, { dispatch: true });
     write("tasks/daily.yml", task("@daily"));
@@ -132,7 +182,10 @@ describe("sync --dispatch", () => {
   });
 
   test("another installation's row is left, with a warning when dispatch starts its task too", async () => {
-    const other = { ...(rows.get("hourly") as { binding: SchedulerBinding }), bundleDir: "/elsewhere/stash" };
+    const other = {
+      ...(rows.get("hourly") as { binding: SchedulerBinding }),
+      environment: { AKM_BUNDLE_DIR: "/elsewhere/stash" },
+    };
     rows.set("hourly", other);
     const result = await akmTasksSync({ backend }, undefined, { dispatch: true });
     expect(invocations()).toEqual(["task dispatch", "task run stash//tasks/hourly --scheduled"]);
@@ -141,13 +194,16 @@ describe("sync --dispatch", () => {
 
   test("another installation's dispatch row refuses --dispatch and is left alone by a plain sync", async () => {
     await akmTasksSync({ backend }, undefined, { dispatch: true });
-    const theirs = { ...(rows.get("dispatch") as { binding: SchedulerBinding }), bundleDir: "/elsewhere/stash" };
+    const theirs = {
+      ...(rows.get("dispatch") as { binding: SchedulerBinding }),
+      environment: { AKM_CONFIG_DIR: "/elsewhere/config" },
+    };
     rows.set("dispatch", theirs);
     await expect(akmTasksSync({ backend }, undefined, { dispatch: true })).rejects.toThrow(
-      /already scheduled from .*\/elsewhere\/stash/,
+      /already scheduled by the installation that reads "\/elsewhere\/config"/,
     );
     await akmTasksSync({ backend });
-    expect(rows.get("dispatch")?.bundleDir).toBe("/elsewhere/stash");
+    expect(rows.get("dispatch")?.environment).toEqual({ AKM_CONFIG_DIR: "/elsewhere/config" });
     expect(invocations()).toContain("task run stash//tasks/hourly --scheduled");
   });
 
