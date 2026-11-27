@@ -37,6 +37,7 @@ import {
   schedulerInputFlags,
   schedulerNativeBindingId,
 } from "./scheduler-binding";
+import { scheduledTaskSubject } from "./scheduler-invocation";
 import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import type { TaskSourceV4Document } from "./source/task-source-v4";
@@ -73,6 +74,11 @@ export interface CompileSchedulerSourcesInput {
   readonly resolveAsset?: PrepareTaskV3ExecutionContext["resolveAsset"];
   /** Refs this host schedules (`scheduler.enabled`); every other source is skipped without being read. */
   readonly enabledRefs?: ReadonlySet<string>;
+  /**
+   * `false` skips the check of each task's target (a v4 projection, the v5 start check): `akm task dispatch` reads
+   * the schedules every minute, and a target that cannot start fails its run instead. Default `true`.
+   */
+  readonly checkTargets?: boolean;
 }
 
 export interface CompiledSchedulerSources {
@@ -154,14 +160,16 @@ async function compileV4Schedules(
   // unconfigured engine) is reported here rather than at fire time.
   // Bindings compile from the original document: the projection drops
   // `schedule[i].inputs`, which are delivered through the invocation tail.
-  await prepareTaskV3Execution(projectTaskSourceV4(parsed), {
-    taskId: input.id,
-    taskRef: input.ref,
-    bundleName: input.bundleName,
-    bundleRoot: input.sourceRoot,
-    config: input.config ?? SCHEDULER_PROJECTION_CONFIG,
-    ...(input.resolveAsset ? { resolveAsset: input.resolveAsset } : {}),
-  });
+  if (input.checkTargets !== false) {
+    await prepareTaskV3Execution(projectTaskSourceV4(parsed), {
+      taskId: input.id,
+      taskRef: input.ref,
+      bundleName: input.bundleName,
+      bundleRoot: input.sourceRoot,
+      config: input.config ?? SCHEDULER_PROJECTION_CONFIG,
+      ...(input.resolveAsset ? { resolveAsset: input.resolveAsset } : {}),
+    });
+  }
   return parsed.schedule.map((schedule) => ({
     cron: schedule.cron,
     ordinal: schedule.ordinal,
@@ -184,7 +192,7 @@ async function compileV5Schedules(
   for (const entry of document.schedule) {
     const start = scheduleStartFlags(entry);
     try {
-      await checkScheduleEntryV5(entry, input.conceptId, bundle);
+      if (input.checkTargets !== false) await checkScheduleEntryV5(entry, input.conceptId, bundle);
     } catch (cause) {
       throw new UsageError(`schedule[${entry.ordinal}]: ${errorMessage(cause)}`, "TASK_SOURCE_INVALID");
     }
@@ -296,9 +304,11 @@ export function scheduledInvocationBundle(invocation: readonly string[] | undefi
   if (!invocation) return undefined;
   const bundleIndex = invocation.indexOf("--bundle");
   if (bundleIndex >= 0) return invocation[bundleIndex + 1];
-  if ((invocation[0] === "workflow" || invocation[0] === "task") && invocation[1] === "run" && invocation[2]) {
+  const subject =
+    invocation[0] === "workflow" && invocation[1] === "run" ? invocation[2] : scheduledTaskSubject(invocation)?.subject;
+  if (subject) {
     try {
-      return parseBundleRef(invocation[2]).bundle;
+      return parseBundleRef(subject).bundle;
     } catch {
       return undefined;
     }
@@ -464,10 +474,10 @@ function installOptionsFor(
 
 /** The source ref an installed row runs, read from its own invocation. */
 export function installedRowRef(row: InstalledSchedulerBinding, scope: SchedulerBundleScope): string | undefined {
-  const [verb, action, subject] = row.invocation ?? [];
-  if (action !== "run" || !subject) return undefined;
-  if (verb === "workflow") return subject;
-  if (verb !== "task") return undefined;
+  const invocation = row.invocation ?? [];
+  if (invocation[0] === "workflow" && invocation[1] === "run" && invocation[2]) return invocation[2];
+  const subject = scheduledTaskSubject(invocation)?.subject;
+  if (!subject) return undefined;
   // A row names its task by ref; one written before 0.11 by its id, in the bundle it names.
   if (subject.includes("//")) return subject;
   return scope.source ? taskRefIn(scope.source, subject) : undefined;

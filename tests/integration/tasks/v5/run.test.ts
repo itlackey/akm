@@ -482,6 +482,16 @@ describe("a clean environment", () => {
     expect(await world({ host: { ...host, AKM_EVENT_SOURCE: undefined }, tasks }).start("tasks/t")).toBe("task");
   });
 
+  test("a step's AKM_TASK_REF is the ref of the task it runs in, the innermost one for a nested task", async () => {
+    const tasks = {
+      "tasks/t": { exec: 'printf "%s" "$AKM_TASK_REF"' },
+      "tasks/outer": { steps: [{ name: "inner", run: "tasks/t" }] },
+    };
+    const ref = await world({ host, tasks }).start("tasks/t");
+    expect(ref).toEndWith("//tasks/t");
+    expect(await world({ host, tasks }).start("tasks/outer")).toContain(ref);
+  });
+
   test("inherit: lets a named variable through, for the task or for one step", async () => {
     const w = world({
       host,

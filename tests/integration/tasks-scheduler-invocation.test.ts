@@ -122,6 +122,25 @@ describe("scheduled task invocation", () => {
     }
   });
 
+  test("reads the `run <ref>` row written from 0.10.261135, behind a launcher that itself runs a file", () => {
+    const tail = ["run", "team//tasks/ping", "--scheduled", "--scope", "a"];
+    expect(parseScheduledInvocationArgv(["/opt/akm", ...tail])).toEqual({
+      binding: ["/opt/akm"],
+      invocation: tail,
+      target: "team",
+    });
+    expect(parseScheduledInvocationArgv(["/usr/bin/bun", "run", "/src/akm/cli.ts", ...tail])).toEqual({
+      binding: ["/usr/bin/bun", "run", "/src/akm/cli.ts"],
+      invocation: tail,
+      target: "team",
+    });
+    // Only `task run` rows were ever written with an id; `run` always names its ref, and is scheduled.
+    expect(
+      parseScheduledInvocationArgv(["/opt/akm", "run", "ping", "--bundle", "team", "--scheduled"]),
+    ).toBeUndefined();
+    expect(parseScheduledInvocationArgv(["/opt/akm", "run", "team//tasks/ping"])).toBeUndefined();
+  });
+
   test("builds and recognizes the public qualified workflow invocation", () => {
     const argv = buildScheduledInvocation(["/opt/akm"], ["workflow", "run", "team//workflows/release"]);
     expect(argv).toEqual(["/opt/akm", "workflow", "run", "team//workflows/release"]);

@@ -504,7 +504,7 @@ describe("schtasks backend signatures", () => {
       logicalSource: { kind: "task", ref: "work//tasks/ping" },
       invocation: ["task", "run", "ping", "--bundle", "work", "--scheduled"],
     };
-    const current: SchedulerBinding = { ...legacy, invocation: ["task", "run", "work//tasks/ping", "--scheduled"] };
+    const current: SchedulerBinding = { ...legacy, invocation: ["run", "work//tasks/ping", "--scheduled"] };
     const options = xmlOptions({ now: () => localDate(2026, 7, 13, 10, 2, 37) });
     const backendFor = (task: SchedulerBinding) =>
       SCHTASKS_BACKEND({

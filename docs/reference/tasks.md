@@ -2,7 +2,9 @@
 
 Task assets are strict, local automation sources. They live at
 `<bundle>/tasks/<id>.yml` and can be run directly or reconciled to cron,
-launchd, or Windows Task Scheduler with `akm doctor scheduler sync`. The task file is
+launchd, or Windows Task Scheduler with `akm doctor scheduler sync`, one row per
+schedule entry or, in the Experimental dispatch mode, one row that runs
+[`akm task dispatch`](cli.md#task-dispatch) every minute. The task file is
 authored source; scheduler entries are derived OS state. Import a task file
 with `akm import <file> --type task`, run a task with `akm run
 <bundle>//tasks/<id>`, and diagnose with `akm doctor`, `akm doctor explain
@@ -164,12 +166,12 @@ A script step or an `exec:` step starts with the environment `--clean` gives
 (`PATH`, `HOME`, the user, shell, temporary folder, locale, time zone and
 terminal, and what Windows needs), akm's own location variables
 (`AKM_CONFIG_DIR`, `AKM_CONFIG_FILE`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`,
-`AKM_STATE_DIR`) and `AKM_EVENT_SOURCE`. Nothing else reaches such a step unless
+`AKM_STATE_DIR`), `AKM_EVENT_SOURCE` and `AKM_TASK_REF`. Nothing else reaches such a step unless
 it is given by name, and where it is given decides which steps have it.
 
 An agent step (`prompt:`, or `run:` of an agent or command) runs your harness as
 you would run it yourself: it starts with akm's environment as it is, with the
-directories this akm resolved and `AKM_EVENT_SOURCE` set over it, and the `env:`
+directories this akm resolved, `AKM_EVENT_SOURCE` and `AKM_TASK_REF` set over it, and the `env:`
 and `secret:` below are set over that. `inherit:` has nothing to add to an agent
 step.
 
@@ -472,7 +474,7 @@ task's `inputs:` declarations both at parse time and again at
 `akm doctor scheduler sync` (once with declared defaults applied), and are
 **delivered** to the scheduled run: `akm doctor scheduler sync` compiles each entry's
 inputs into the scheduler binding's own invocation tail
-(`akm task run <id> --scheduled --<name> <value>…`, names sorted), so the
+(`akm run <bundle//concept-id> --scheduled --<name> <value>…`, names sorted), so the
 fired run receives them exactly as `akm run <bundle>//tasks/<id> --<name> <value>`
 would. Multiple schedule entries create deterministic scheduler bindings
 for the one source task.
@@ -886,7 +888,7 @@ for full before/after examples and recovery guidance.
   that ran the sync, rewritten on every crontab write and removed with the
   last akm block; cron applies it to every row below it.
 - A task's row is its command plus its schedule:
-  `<launcher> task run <bundle//concept-id> --scheduled`, and it sets its
+  `<launcher> run <bundle//concept-id> --scheduled`, and it sets its
   own environment. Every row sets `AKM_BUNDLE_DIR` to the working stash of
   the shell that ran the sync (its `AKM_BUNDLE_DIR`, or the default bundle),
   so the scheduled run uses the same working stash, the ref's bundle finds a
@@ -903,16 +905,17 @@ for full before/after examples and recovery guidance.
   Run the sync from a shell whose environment you would want scheduled.
 
   ```text
-  15 2 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run work//tasks/nightly --scheduled > /home/u/.cache/akm/tasks/logs/nightly.log 2>&1
+  15 2 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm run work//tasks/nightly --scheduled > /home/u/.cache/akm/tasks/logs/nightly.log 2>&1
   ```
 
   A row whose command is over 1,000 bytes runs a wrapper script under the
   log directory instead (`sh <log dir>/.akm-cron-wrapper-<id>-<hash>.sh`);
   sync reads the script to tell which task the row runs.
 
-  Releases before 0.11 wrote `task run <id> --bundle <bundle> --scheduled`. akm
-  still reads and runs such a row until 0.11, and the next `akm doctor scheduler sync`
-  reports it as `updated` and rewrites it in the form above.
+  Releases before 0.10.261135 wrote `task run <bundle//concept-id> --scheduled`,
+  and releases before that `task run <id> --bundle <bundle> --scheduled`. akm
+  still reads and runs both until 0.11, and the next `akm doctor scheduler sync`
+  reports such a row as `updated` and rewrites it in the form above.
 
   Releases 0.9.0 through 0.9.17-alpha.6 wrote a `--scheduler-context
   <file>` argument into each row instead, naming a descriptor file under

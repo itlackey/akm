@@ -103,6 +103,23 @@ task survives an upgrade by any install method with no manual step. An
 explicit empty list is a choice: sync then removes every akm-written row.
 `akm migrate status` reports anything else that remains pending, and why.
 
+## Dispatch mode (Experimental)
+
+From 0.10.261135 a host can replace its per-task rows with one row that runs
+`akm task dispatch` every minute:
+
+```sh
+akm doctor scheduler sync --dispatch --dry-run   # what would be removed and written
+akm doctor scheduler sync --dispatch
+```
+
+Dispatch reads `scheduler.enabled` and the task files each minute, so enabling
+a task or editing its schedule applies on the next minute without a sync. Each
+run is started with the same command and log file its row had, and appears in
+`akm doctor log --task <id>` as before. `akm doctor scheduler sync --no-dispatch`
+switches back. Per-task rows are Deprecated: in 0.11 the dispatch row is the
+only entry. See [`akm task dispatch`](../reference/cli.md#task-dispatch).
+
 ## Migrating or repairing scheduler bindings (`--rebind`)
 
 If akm was moved, reinstalled under a different package prefix, or repaired

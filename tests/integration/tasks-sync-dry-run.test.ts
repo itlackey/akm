@@ -243,7 +243,7 @@ describe("akmTasksSyncPlan — dry-run", () => {
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *");
     await akmTasksSync({ backend });
-    const stripped = exec.current().replace(/task run \S+\/\/tasks\/(\S+)/, "task run $1");
+    const stripped = exec.current().replace(/akm run \S+\/\/tasks\/(\S+)/, "akm task run $1");
     expect(stripped).not.toBe(exec.current());
     exec.write(stripped);
     const beforePreview = exec.current();

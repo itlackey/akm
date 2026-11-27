@@ -10,6 +10,7 @@ import { loadConfig, saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import * as backends from "../../../src/tasks/backends";
 import { CRON_BACKEND } from "../../../src/tasks/backends/cron";
+import { scheduledTaskSubject } from "../../../src/tasks/scheduler-invocation";
 import { documents } from "../../../src/workspace";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -79,7 +80,7 @@ beforeEach(async () => {
 
 /** Whether an installed row runs the task `id`: by its ref, or in the id form written before 0.11. */
 function namesTask(row: { invocation?: readonly string[] }, id: string): boolean {
-  const subject = row.invocation?.[2];
+  const subject = scheduledTaskSubject(row.invocation)?.subject;
   return subject === id || subject?.endsWith(`//tasks/${id}`) === true;
 }
 

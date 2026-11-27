@@ -78,6 +78,7 @@ export type RunTarget =
   | { kind: "script"; refIndex: number; ref: string; file: string; asset: Asset }
   | { kind: "asset"; refIndex: number; ref: string; type: string; target: string; file: string; asset: Asset }
   | { kind: "run-id"; refIndex: number; ref: string; target: string }
+  | { kind: "scheduled"; refIndex: number; ref: string }
   | { kind: "error"; refIndex: number; error: unknown };
 
 let runTarget: RunTarget | undefined;
@@ -90,6 +91,15 @@ export function setRunTarget(target: RunTarget | undefined): void {
 /** The position of the ref in the tokens after `run`, or -1 when there is none. */
 export function runRefIndex(runArgs: readonly string[]): number {
   return findCittyTopLevelCommandIndex(runArgs, args);
+}
+
+/**
+ * Whether the target resolved at startup is a scheduler row's start (`<ref> --scheduled`) whose ref could not be
+ * resolved. The scheduler starts only tasks, and `task run` records such a start's failure (an unreadable config, a
+ * task that is gone), so the start goes to it, and startup does not read the config first.
+ */
+export function isUnresolvedScheduledRun(): boolean {
+  return runTarget?.kind === "scheduled";
 }
 
 /**
@@ -137,6 +147,7 @@ export async function resolveRunTarget(runArgs: readonly string[]): Promise<RunT
     const after = createParsedInvocation(["", "", ...runArgs.slice(refIndex + 1)]).getFlagValue("--bundle");
     return after === undefined ? located : locate(after);
   } catch (error) {
+    if (runArgs.slice(refIndex + 1).includes("--scheduled")) return { kind: "scheduled", refIndex, ref };
     return { kind: "error", refIndex, error };
   }
 }
@@ -171,6 +182,11 @@ export const runAssetCommand = defineJsonCommand({
     const own = invocation.ownArgsOf(rawArgs);
     if (resolved.kind === "script") {
       await runScript(resolved, own.slice(0, resolved.refIndex), invocation.passthroughArgs());
+      return;
+    }
+    if (resolved.kind === "scheduled") {
+      setResolvedUsageAssetType("task", { args: tasksRunCommand.args as ArgsDef });
+      await runCommand(tasksRunCommand, { rawArgs: [...own, ...rawArgs.slice(own.length)] });
       return;
     }
     const { ref, target } = resolved;

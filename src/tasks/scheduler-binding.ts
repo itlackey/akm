@@ -19,7 +19,7 @@ import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { UsageError } from "../core/errors";
 import { canonicalInputJson, type InputFlag } from "../execution/input-contract";
 import type { ScheduleBackend } from "./schedule";
-import type { ScheduledRowEnvironment } from "./scheduler-invocation";
+import { type ScheduledRowEnvironment, scheduledTaskSubject } from "./scheduler-invocation";
 import { normaliseTaskConceptId } from "./task-id";
 
 export type SchedulerLogicalSource = Readonly<{
@@ -115,6 +115,27 @@ export interface SchedulerBackend {
   expectedSignature?(binding: SchedulerBinding, opts?: SchedulerInstallOptions): string;
 }
 
+/**
+ * The one row of a host in dispatch mode (`akm doctor scheduler sync --dispatch`): `akm task dispatch` every minute,
+ * which starts each enabled task that is due. A task whose id is `dispatch` has the same native id: switching mode
+ * removes the one row before it writes the other.
+ */
+export const DISPATCH_BINDING: SchedulerBinding = freezeBinding({
+  id: "dispatch",
+  nativeId: "dispatch",
+  logicalSource: { kind: "task", ref: "dispatch" },
+  cron: "*/1 * * * *",
+  source: "akm task dispatch",
+  ordinal: 0,
+  enabled: true,
+  invocation: ["task", "dispatch"],
+});
+
+/** Whether an installed row is the dispatch row. */
+export function isDispatchRow(row: InstalledSchedulerBinding): boolean {
+  return row.invocation?.length === 2 && row.invocation[0] === "task" && row.invocation[1] === "dispatch";
+}
+
 export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindingsInput): readonly SchedulerBinding[] {
   const id = normaliseTaskConceptId(input.id);
   const ref = assertQualifiedRef(input.qualifiedRef, "task");
@@ -130,7 +151,6 @@ export function compileTaskSchedulerBindings(input: CompileTaskSchedulerBindings
         ordinal: schedule.ordinal,
         enabled: true,
         invocation: [
-          "task",
           "run",
           ref,
           "--scheduled",
@@ -207,7 +227,7 @@ export function schedulerBindingNativeId(binding: SchedulerBinding): string {
  * nested one behind a digest spelling); every other row is its native id.
  */
 export function schedulerLogicalBindingId(nativeId: string, invocation: readonly string[]): string {
-  const subject = invocation[0] === "task" && invocation[1] === "run" ? invocation[2] : undefined;
+  const subject = scheduledTaskSubject(invocation)?.subject;
   if (subject === undefined) return nativeId;
   // A row names its task by ref (`<bundle>//<concept id>`); a row written before 0.11 by its id.
   const conceptId = subject.includes("//") ? parseBundleRef(subject).conceptId : subject;

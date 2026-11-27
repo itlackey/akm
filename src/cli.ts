@@ -136,26 +136,33 @@ import { closestMatch } from "./core/closest-match";
 import { explainedByReaderGone, isTerminal, stdout } from "./core/stdio";
 import "./commands/health/renderers";
 import "./commands/metrics/md-report";
+import { DOCTOR_ALIASES } from "./commands/doctor-aliases";
 import { execCommand } from "./commands/exec-cli";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { doctorPromptCommand, improveCommand } from "./commands/improve/improve-cli";
 import { judgeCommand } from "./commands/judge-cli";
-import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
 import { modelsCommand } from "./commands/models-cli";
-import { doctorLogCommand, logCommand } from "./commands/observability-cli";
+import { doctorLogCommand } from "./commands/observability-cli";
 import { proposalCommand } from "./commands/proposal/proposal-cli";
 import { rememberCommand } from "./commands/read/remember-cli";
 import { rulesCommand } from "./commands/read/rules";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
-import { resolveRunTarget, runAssetCommand, runPassthroughFrom, runRefIndex, setRunTarget } from "./commands/run-cli";
+import {
+  isUnresolvedScheduledRun,
+  resolveRunTarget,
+  runAssetCommand,
+  runPassthroughFrom,
+  runRefIndex,
+  setRunTarget,
+} from "./commands/run-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
 import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand } from "./commands/sources/stash-cli";
-import { taskCommand } from "./commands/tasks/tasks-cli";
+import { namesTaskToRun, taskCommand } from "./commands/tasks/tasks-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
@@ -429,7 +436,8 @@ const healthArgs = {
 const healthCommand = defineCommand({
   meta: {
     name: "health",
-    description: "Check akm runtime health, artifacts, and improve metrics",
+    description:
+      "Deprecated, removed in 0.11: use `akm doctor`. Check akm runtime health, artifacts, and improve metrics",
   },
   args: healthArgs,
   async run(context) {
@@ -685,8 +693,7 @@ const commands = {
   index: indexCommand,
   doctor: doctorCommand,
   health: healthCommand,
-  metrics: metricsCommand,
-  info: infoCommand,
+  ...DOCTOR_ALIASES,
   bundle: bundleCommand,
   backups: backupsCommand,
   upgrade: upgradeCommand,
@@ -706,12 +713,10 @@ const commands = {
   config: configCommand,
   models: modelsCommand,
   feedback: feedbackCommand,
-  log: logCommand,
   agent: agentCommand,
   command: commandCommand,
   lint: lintCommand,
   improve: improveCommand,
-  judge: judgeCommand,
   proposal: proposalCommand,
   completions: completionsCommand,
   env: envCommand,
@@ -850,18 +855,7 @@ const MAIN_TOP_LEVEL_ARGS = main.args as ArgsDef;
 export function isTaskRunWithId(argv: readonly string[]): boolean {
   const args = argv.slice(2);
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
-  const command = commandIndex >= 0 ? args[commandIndex] : undefined;
-  if (command !== "task") return false;
-  const taskArgs = args.slice(commandIndex + 1);
-  if (taskArgs[0] !== "run") return false;
-  const runCommand = (taskCommand.subCommands as unknown as Record<string, { args?: ArgsDef }> | undefined)?.run;
-  if (!runCommand?.args) return false;
-  try {
-    const parsed = parseArgs(taskArgs.slice(1), runCommand.args) as Record<string, unknown>;
-    return typeof parsed.id === "string" && parsed.id.length > 0;
-  } catch {
-    return false;
-  }
+  return args[commandIndex] === "task" && namesTaskToRun(args.slice(commandIndex + 1));
 }
 
 /** Recovery/setup surfaces must remain reachable when config.json is invalid. */
@@ -882,7 +876,7 @@ export function shouldBypassConfigStartup(invocation: ParsedInvocation): boolean
   // `setup`/`migrate` do, or the recovery instructions are themselves
   // unreachable.
   if (command === "help" || command === "hints") return true;
-  if (isTaskRunWithId(invocation.argv)) return true;
+  if (isTaskRunWithId(invocation.argv) || isUnresolvedScheduledRun()) return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");
   const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));

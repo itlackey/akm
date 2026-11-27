@@ -94,18 +94,29 @@ function cronSchedules(crontab: string): string[] {
   });
 }
 
-/** Each akm row's id with its launcher: the words after its `NAME=value` environment, up to `--scheduler-context` or `task run`. */
+/** Each akm row's id with its launcher: the words after its `NAME=value` environment, up to where akm's own arguments start. */
 function cronLaunchers(crontab: string): string[] {
   const lines = crontab.split(/\r?\n/);
   return lines.flatMap((line, index) => {
     const id = /^# akm:task (.+) BEGIN$/.exec(line)?.[1];
     if (!id) return [];
     const words = withoutAssignments((lines[index + 1] ?? "").split(/\s+/).slice(5));
-    const end = words.findIndex(
-      (word, at) => word === "--scheduler-context" || (word === "task" && words[at + 1] === "run"),
-    );
-    return [`${id} ${words.slice(0, end).join(" ")}`];
+    return [`${id} ${words.slice(0, akmArgsStart(words)).join(" ")}`];
   });
+}
+
+/**
+ * Where a row's akm arguments start, after its launcher: `--scheduler-context` (0.9), `task run <ref>`, or
+ * `run <ref> --scheduled`. A launcher can hold a `run` of its own (`bun run`), so a bare `run` counts only when
+ * `--scheduled` follows its ref.
+ */
+function akmArgsStart(words: string[]): number {
+  return words.findIndex(
+    (word, at) =>
+      word === "--scheduler-context" ||
+      (word === "task" && words[at + 1] === "run") ||
+      (word === "run" && words[at + 2] === "--scheduled"),
+  );
 }
 
 /** A row's command without the leading `NAME=value` assignments it sets for itself. */
@@ -452,12 +463,12 @@ for (const origin of ["previous", "0.9.32"] as const) {
       // buildScheduledInvocation/resolveAkmInvocation in
       // src/tasks/backends/cron.ts and src/tasks/resolve-akm-bin.ts, unquoted
       // via quoteForCron since fixture paths never contain shell-special
-      // characters) followed by `task run <ref>`. Strip the `task run …` tail
+      // characters) followed by `run <ref> --scheduled`. Strip that tail
       // and re-invoke the same resolved argv with `--version` instead.
       const tokens = withoutAssignments(command.split(/\s+/));
-      const taskIndex = tokens.indexOf("task");
-      if (taskIndex <= 0) throw new Error(`Could not find the "task" subcommand in generated command: ${command}`);
-      const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, taskIndex);
+      const argsIndex = akmArgsStart(tokens);
+      if (argsIndex <= 0) throw new Error(`Could not find akm's arguments in generated command: ${command}`);
+      const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, argsIndex);
       if (!rowRuntime) throw new Error(`Could not extract an invocation from command: ${command}`);
       const version = await runLauncher(rowRuntime, [...rowRuntimeArgs, "--version"], home.env);
       expect(version.status, version.stderr).toBe(0);

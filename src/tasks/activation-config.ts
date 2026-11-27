@@ -24,6 +24,7 @@ import { bundleContentRoots, isBundleEnabled } from "../core/config/config-sourc
 import { UsageError } from "../core/errors";
 import { warnOnce } from "../core/warn";
 import type { InstalledSchedulerBinding } from "./scheduler-binding";
+import { scheduledTaskSubject } from "./scheduler-invocation";
 import { findTask } from "./task-ref";
 
 export function canonicalSchedulerRef(ref: string): string {
@@ -132,8 +133,9 @@ function installedEntryRef(entry: InstalledSchedulerBinding, config: AkmConfig):
       if (!parsed.bundle || !isBundleEnabled(config, parsed.bundle)) return undefined;
       return hasBackingFile(config, parsed.bundle, parsed.conceptId) ? ref : undefined;
     }
-    if (invocation[0] !== "task" || invocation[1] !== "run" || !invocation[2]) return undefined;
-    const subject = invocation[2];
+    const task = scheduledTaskSubject(invocation);
+    if (!task) return undefined;
+    const { subject } = task;
     // A row names its task by ref; one written before 0.11 by its id, in the bundle it names (else the default one).
     if (subject.includes("//")) {
       const ref = canonicalSchedulerRef(subject);
@@ -141,7 +143,7 @@ function installedEntryRef(entry: InstalledSchedulerBinding, config: AkmConfig):
       if (!bundle || !isBundleEnabled(config, bundle)) return undefined;
       return findAsset(ref) ? ref : undefined;
     }
-    const bundleIndex = invocation.indexOf("--bundle", 3);
+    const bundleIndex = invocation.indexOf("--bundle", task.flagsFrom);
     const bundle = bundleIndex === -1 ? config.defaultBundle : invocation[bundleIndex + 1];
     if (!bundle || !isBundleEnabled(config, bundle)) return undefined;
     const found = findTask({ bundle }, subject);

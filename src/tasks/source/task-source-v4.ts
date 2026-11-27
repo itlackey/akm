@@ -710,9 +710,9 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
  *
  * A scheduled firing supplies NO input flags — `compileTaskSchedulerBindings`
  * (../scheduler-binding.ts) appends only the entry's own
- * `schedule[i].inputs` to the `["task","run",id,"--bundle",b,"--scheduled"]`
+ * `schedule[i].inputs` to the `["run", ref, "--scheduled"]`
  * tail — so that literal PLUS the declared defaults is the complete value set
- * `akm task run --scheduled` will see, and it is checked there by the very
+ * the scheduled run will see, and it is checked there by the very
  * same `applyInputDefaults` + `validateInputs` pair (../run/load-task.ts).
  * A `required: true` declaration may not also carry a `default`
  * (`parseInputDeclaration` above), so an entry that names no value for one can

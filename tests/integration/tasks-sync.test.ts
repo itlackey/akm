@@ -138,7 +138,7 @@ describe("akmTasksSync — schedule drift", () => {
     const backend = backendFor(exec);
     writeTask("alpha", "*/15 * * * *", true);
     await akmTasksSync({ backend });
-    exec.write(exec.current().replace(/^([^#\n].*task run \S*\/tasks\/alpha .*)$/m, "# akm:disabled $1"));
+    exec.write(exec.current().replace(/^([^#\n].*akm run \S*\/tasks\/alpha .*)$/m, "# akm:disabled $1"));
 
     writeTask("beta", "0 2 * * *");
     const result = await akmTasksSync({ backend });
@@ -165,7 +165,7 @@ describe("akmTasksSync — schedule drift", () => {
     expect(result.installed).toEqual([]);
     // The crontab now carries the new schedule, not the stale one.
     expect(exec.current()).toContain(
-      `45 */6 * * * ${sandboxRowEnvironmentInline(stashDir)} /usr/local/bin/akm task run stash//tasks/beta --scheduled`,
+      `45 */6 * * * ${sandboxRowEnvironmentInline(stashDir)} /usr/local/bin/akm run stash//tasks/beta --scheduled`,
     );
     expect(exec.current()).not.toContain("0 2 * * * ");
   });
@@ -380,7 +380,7 @@ describe("akmTasksSync — schedule drift", () => {
     writeTask("alpha", "*/15 * * * *");
     await akmTasksSync({ backend });
     const before = exec.current();
-    const stripped = before.replace(/task run \S+\/\/tasks\/(\S+)/, "task run $1");
+    const stripped = before.replace(/akm run \S+\/\/tasks\/(\S+)/, "akm task run $1");
     expect(stripped).not.toBe(before);
     exec.write(stripped);
 
@@ -396,7 +396,7 @@ describe("akmTasksSync — schedule drift", () => {
     writeTask("alpha", "*/15 * * * *");
     await akmTasksSync({ backend });
     const current = exec.current();
-    const legacy = current.replace(/task run (\S+)\/\/tasks\/(\S+)/, "task run $2 --bundle $1");
+    const legacy = current.replace(/akm run (\S+)\/\/tasks\/(\S+)/, "akm task run $2 --bundle $1");
     expect(legacy).not.toBe(current);
     exec.write(legacy);
 
@@ -650,11 +650,11 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
     expect(byId(listBlocks(exec.current()))).toEqual([
       {
         id: "alpha",
-        body: `*/15 * * * * ${inline} ${LAUNCHER} task run stash//tasks/alpha --scheduled > /var/log/akm/alpha.log 2>&1`,
+        body: `*/15 * * * * ${inline} ${LAUNCHER} run stash//tasks/alpha --scheduled > /var/log/akm/alpha.log 2>&1`,
       },
       {
         id: "beta",
-        body: `0 2 * * * ${inline} ${LAUNCHER} task run stash//tasks/beta --scheduled > /var/log/akm/beta.log 2>&1`,
+        body: `0 2 * * * ${inline} ${LAUNCHER} run stash//tasks/beta --scheduled > /var/log/akm/beta.log 2>&1`,
       },
     ]);
     expect((await akmTasksSync({ backend })).unchanged.sort()).toEqual(["alpha", "beta"]);
@@ -693,11 +693,11 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
     expect(byId(listBlocks(exec.current()))).toEqual([
       {
         id: "alpha",
-        body: `*/15 * * * * ${inline} ${LAUNCHER} task run ${bundle}//tasks/alpha --scheduled > /var/log/akm/alpha.log 2>&1`,
+        body: `*/15 * * * * ${inline} ${LAUNCHER} run ${bundle}//tasks/alpha --scheduled > /var/log/akm/alpha.log 2>&1`,
       },
       {
         id: "beta",
-        body: `0 2 * * * ${inline} /usr/local/bin/akm task run ${bundle}//tasks/beta --scheduled > /var/log/akm/beta.log 2>&1`,
+        body: `0 2 * * * ${inline} /usr/local/bin/akm run ${bundle}//tasks/beta --scheduled > /var/log/akm/beta.log 2>&1`,
       },
     ]);
     expect((await akmTasksSync({ backend })).unchanged.sort()).toEqual(["alpha", "beta"]);

@@ -400,7 +400,7 @@ describe("cron backend drift detection", () => {
     const exec = memoryExec();
     const backend = CRON_BACKEND(opts(exec));
     const legacy = targeted(SYNC_TASK, "work");
-    const current: SchedulerBinding = { ...legacy, invocation: ["task", "run", "work//tasks/ping", "--scheduled"] };
+    const current: SchedulerBinding = { ...legacy, invocation: ["run", "work//tasks/ping", "--scheduled"] };
     backend.install(legacy);
     const [idForm] = listSync(backend);
     expect(idForm!.signature).toBe(backend.expectedSignature?.(legacy));

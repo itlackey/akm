@@ -7,7 +7,8 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { main } from "../../src/cli";
-import { describeUsage, resolveCliUsageSource, type UsageCommand } from "../../src/cli/usage";
+import { describeUsage, readUsage, startUsage, type UsageCommand } from "../../src/cli/usage";
+import { resolveCliUsageSource, setUsageErrorCode } from "../../src/cli/usage-kinds";
 import { getConfigDir, getDataDir } from "../../src/core/paths";
 import { openDatabase } from "../../src/storage/database";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -746,4 +747,92 @@ test("a healthy or absent usage store adds no doctor advisory", () => {
   expect(quiet()).toBe(false);
   expect(cli(["--version"]).status).toBe(0);
   expect(quiet()).toBe(false);
+});
+
+test("a run the scheduler started is source task: task dispatch, run --scheduled and task run --scheduled", () => {
+  const usage = (...own: string[]) => describeUsage(main as UsageCommand, own);
+  expect(resolveCliUsageSource({}, false, usage("task", "dispatch"))).toBe("task");
+  expect(resolveCliUsageSource({}, false, usage("run", "stash//tasks/nightly", "--scheduled"))).toBe("task");
+  expect(resolveCliUsageSource({}, false, usage("task", "run", "nightly", "--scheduled"))).toBe("task");
+  expect(resolveCliUsageSource({}, true, usage("task", "run", "nightly", "--scheduled"))).toBe("task");
+  // Not scheduled: as before.
+  expect(resolveCliUsageSource({}, false, usage("task", "run", "nightly"))).toBe("unknown");
+  expect(resolveCliUsageSource({}, false, usage("task", "run", "nightly", "--scheduled=false"))).toBe("unknown");
+  // An explicit AKM_EVENT_SOURCE still wins.
+  expect(resolveCliUsageSource({ AKM_EVENT_SOURCE: "improve" }, false, usage("task", "dispatch"))).toBe("improve");
+});
+
+/** One in-process invocation of `own`, finished with `exitCode`; `during` runs between start and finish. */
+function invoke(own: string[], exitCode: number, during = () => {}) {
+  const before = process.exitCode;
+  const finish = startUsage(main as UsageCommand, own, 0, "0.10.0");
+  during();
+  process.exitCode = exitCode;
+  try {
+    finish();
+  } finally {
+    process.exitCode = before;
+  }
+}
+
+test("only error categories are failures: a health warning is counted as its outcome, not a failure", () => {
+  sandbox();
+  invoke(["doctor"], 4);
+  invoke(["doctor"], 1);
+  const [row] = readUsage().aggregates;
+  expect(row).toMatchObject({ attempts: 2, completed: 2, failures: 1 });
+  expect(row?.outcomes).toEqual({ "health-warning:4:unresolved": 1, "general:1:unresolved": 1 });
+});
+
+test("the error's closed code is kept on the invocation and its outcome; any other string is not", () => {
+  sandbox();
+  invoke(["search", "q"], 2, () => setUsageErrorCode("INVALID_FLAG_VALUE"));
+  invoke(["search", "q"], 2, () => setUsageErrorCode("RESOURCE_ALREADY_EXISTS"));
+  invoke(["search", "q"], 1, () => setUsageErrorCode("ACME_CHILD_CODE")); // a child's code akm does not define
+  invoke(["search", "q"], 0, () => setUsageErrorCode("INVALID_FLAG_VALUE")); // recovered: a success keeps none
+  const usage = readUsage();
+  // Invocations in the same millisecond come back in id order, which is random: compare them as a set.
+  expect(usage.details.map((row) => `${row.exitCode}:${row.errorCode}`).sort()).toEqual([
+    "0:undefined",
+    "1:undefined",
+    "2:INVALID_FLAG_VALUE",
+    "2:RESOURCE_ALREADY_EXISTS",
+  ]);
+  expect(usage.aggregates[0]?.outcomes).toEqual({
+    "usage:2:unresolved:INVALID_FLAG_VALUE": 1,
+    "usage:2:unresolved:RESOURCE_ALREADY_EXISTS": 1,
+    "general:1:unresolved": 1,
+    "success:0:unresolved": 1,
+  });
+  expect(JSON.stringify(usage)).not.toContain("ACME");
+});
+
+test("a CLI error records its code: an unknown flag is UNKNOWN_FLAG", () => {
+  sandbox();
+  expect(cli(["show", "x", "--no-such-flag"]).status).toBe(2);
+  const [row] = report().details.filter((detail: { command: string[] }) => detail.command[0] === "show");
+  expect(row).toMatchObject({ category: "usage", exitCode: 2, errorCode: "UNKNOWN_FLAG" });
+});
+
+test("Deprecated use and the running task's ref are kept on the invocation only, and grouped by task", () => {
+  sandbox();
+  const env = { ...process.env, AKM_TASK_REF: "fixture//tasks/nightly" };
+  expect(cli(["judge", "--list"], env).status).toBe(0); // Deprecated command
+  expect(cli(["doctor", "judge", "--list"], env).status).toBe(0); // its replacement, the same definition
+  expect(cli(["judge", "--list"]).status).toBe(0); // outside a task
+  const result = report();
+  const detail = (command: string[], task?: string) =>
+    result.details.find(
+      (row: { invokedCommand: string[]; task?: string }) =>
+        row.invokedCommand.join(" ") === command.join(" ") && row.task === task,
+    );
+  expect(detail(["judge"], "fixture//tasks/nightly")).toMatchObject({ deprecated: { command: true, flags: [] } });
+  expect(detail(["doctor", "judge"], "fixture//tasks/nightly")?.deprecated).toBeUndefined();
+  expect(detail(["judge"])).toMatchObject({ deprecated: { command: true } });
+  expect(result.deprecatedByTask).toEqual({
+    "fixture//tasks/nightly": { calls: 1, commands: { judge: 1 }, flags: {} },
+    "[none]": { calls: 1, commands: { judge: 1 }, flags: {} },
+  });
+  // Never an aggregate's dimension, so nothing the daily report reads carries it.
+  expect(JSON.stringify(result.aggregates)).not.toContain("nightly");
 });

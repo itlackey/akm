@@ -102,7 +102,6 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
 
     expect(plan.desired).toHaveLength(1);
     expect(plan.desired[0]?.invocation).toEqual([
-      "task",
       "run",
       "team//tasks/scoped-nightly",
       "--scheduled",
@@ -142,7 +141,6 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
 
     expect(plan.desired).toHaveLength(1);
     expect(plan.desired[0]?.invocation).toEqual([
-      "task",
       "run",
       "team//tasks/listy-nightly",
       "--scheduled",
@@ -175,7 +173,7 @@ describe("schedule[].inputs compiles a sorted --<name> <value> flag tail after -
     });
 
     expect(plan.desired).toHaveLength(1);
-    expect(plan.desired[0]?.invocation).toEqual(["task", "run", "team//tasks/bare-nightly", "--scheduled"]);
+    expect(plan.desired[0]?.invocation).toEqual(["run", "team//tasks/bare-nightly", "--scheduled"]);
   });
 });
 
@@ -218,16 +216,7 @@ describe("schedule[].inputs is validated against the declared contract, never si
 
 describe("a compiled input-flag tail round-trips through the public scheduler invocation parser (B-46)", () => {
   test("buildScheduledInvocation accepts the sorted tail, and parseScheduledInvocationArgv recovers the identical public invocation plus target", () => {
-    const invocation = [
-      "task",
-      "run",
-      "team//tasks/scoped-nightly",
-      "--scheduled",
-      "--alpha",
-      "true",
-      "--zone",
-      "west",
-    ];
+    const invocation = ["run", "team//tasks/scoped-nightly", "--scheduled", "--alpha", "true", "--zone", "west"];
 
     const parsed = parseScheduledInvocationArgv(buildScheduledInvocation(["/usr/bin/akm"], invocation));
 

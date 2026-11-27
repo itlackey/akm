@@ -573,7 +573,6 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       expect(result.installed).toEqual([]);
       expect(result.removed).toEqual([]);
       expect((backend.list() as Array<{ invocation?: string[] }>)[0]!.invocation).toEqual([
-        "task",
         "run",
         `${bundleName}//tasks/ping`,
         "--scheduled",
@@ -600,7 +599,7 @@ describe("LAUNCHD_BACKEND drift signatures", () => {
       const qualifiedTask: SchedulerBinding = {
         ...makeTask("0 9 * * *"),
         logicalSource: { kind: "task", ref: `${bundleName}//tasks/ping` },
-        invocation: ["task", "run", `${bundleName}//tasks/ping`, "--scheduled"],
+        invocation: ["run", `${bundleName}//tasks/ping`, "--scheduled"],
       };
       // The sandbox stash is the env-selected working stash (AKM_BUNDLE_DIR,
       // no configured bundle), so its row carries the path in the plist.

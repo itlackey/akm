@@ -62,7 +62,7 @@ Deprecated and its replacement exists in the same build, akm prints one line to
 stderr, once per process, naming the replacement:
 `[deprecated] akm health is deprecated and is removed in 0.11: use `akm doctor`.`
 Stdout, JSON and exit codes are unchanged, and `--quiet` silences the line. It
-is not printed for `--help`, for the scheduler's `task run --scheduled`, or for
+is not printed for `--help`, for a scheduler row's run (`--scheduled`), or for
 commands run by a task, `improve` or an audit (`AKM_EVENT_SOURCE` of `task`,
 `improve` or `audit`). The forms covered are `health`, `metrics`, `info`, `log`,
 `judge`, `improve judge`, every `workflow` command (`run`, `plan`, `status`,
@@ -177,7 +177,7 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm doctor`, or the Deprecated `akm health`) | — |
 | 70 | Internal / unclassified error | unexpected throw |
-| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (the asset mutation lease, held by another writer, gives up after 10 minutes), not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
+| 75 | Transient — retry shortly (sysexits `EX_TEMPFAIL`); another akm process holds a lock or is writing `state.db` or `index.db` right now (the asset mutation lease, held by another writer, gives up after 10 minutes), or a registry or website did not answer, not a bad command line. `search`, `curate` and `show` do not exit 75 because the index is cold or being built: they never build and never wait | `TransientError` |
 | 78 | Configuration error | `ConfigError` |
 
 Failures classified by akm emit a JSON error envelope on **stderr** before
@@ -541,6 +541,7 @@ akm doctor prompt lessons/my-lesson --task "Focus on examples" --format text
 akm doctor judge --list
 akm doctor judge reflect.quality --schema
 akm doctor scheduler sync --dry-run
+akm doctor scheduler sync --dispatch
 akm doctor scheduler sync --prune --yes
 akm doctor explain team//tasks/nightly
 akm doctor log --task nightly --limit 20
@@ -555,6 +556,23 @@ scheduler entries a plain sync can never reclaim. Prune is a preview that exits
 non-zero when it finds candidates; `--yes` removes every candidate and `--id
 <id1,id2,...>` limits it to the named binding ids (a name that is not a current
 orphan is a usage error and removes nothing).
+
+`--dispatch` (Experimental, first in 0.10.261135) switches the host to dispatch
+mode: this installation's per-task rows are removed, then one row is written
+that runs [`akm task dispatch`](#task-dispatch) every minute. Later syncs, and
+`task enable` and `task disable`, keep the mode, and an enable or a schedule
+edit needs no sync to take effect. `--no-dispatch` switches back: the dispatch row is
+removed, then the per-task rows are written. A host never holds both: when a
+removal fails, sync writes nothing after it, reports it, and exits 1. The
+dispatch row sets no `AKM_BUNDLE_DIR` (Deprecated) unless the syncing process
+was given one: `akm task dispatch` finds the stash through the config. An
+installation's dispatch row is the one naming its config directory or file,
+none for the default. Only one installation per user can use dispatch mode;
+`--dispatch` is a usage error while another installation's dispatch row is
+installed. In dispatch mode an
+`@reboot` entry never starts, and sync reports it. Per-task rows are
+Deprecated and removed in 0.11, where the dispatch row is the only entry;
+a sync that writes them says so in `warnings`.
 
 `akm doctor explain <ref>` takes a task ref or id (`--bundle` selects the
 bundle), or a workflow ref (`workflows/<name>`), and prints the same secret-free,
@@ -4654,7 +4672,7 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
 stable source contract this release accepts (the Experimental `version: 5-beta.1` is described in [Tasks](tasks.md#task-source-v5-experimental)); `akm import <file> --type task`
 imports a v4 file — see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | run | explain | sync | doctor | history | prune`
+group is `add | enable | disable | run | dispatch | explain | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
 task. Only `enable` and `disable` are current (validate one task file with `akm lint <file> --type tasks`, a bundle's tasks with `akm lint --type tasks`). The rest are
 Deprecated, removed in 0.11:
@@ -4707,9 +4725,30 @@ it never spawns anything, writes history, or touches the scheduler. A
 secret-shaped value prints as `<redacted>`. See
 [`akm doctor explain`](tasks.md#akm-task-explain).
 
-Through 0.10 the OS scheduler invokes `akm task run <id> --scheduled` at the
-scheduled time (that invocation prints no deprecation notice); run a task by hand
-with `akm run <ref>`. Each run is recorded as a row in the durable `task_history`
+The OS scheduler runs `akm run <bundle//concept-id> --scheduled` at the
+scheduled time, from the task's own row or, in dispatch mode, from
+`akm task dispatch`. A row written before 0.10.261135 runs
+`akm task run <ref> --scheduled` (that invocation prints no deprecation
+notice) until the next `akm doctor scheduler sync` rewrites it. Run a task by
+hand with `akm run <ref>`.
+
+#### task dispatch
+
+`akm task dispatch` (Experimental, first in 0.10.261135) is what the OS
+scheduler runs every minute on a host in dispatch mode (`akm doctor scheduler
+sync --dispatch`). It reads `scheduler.enabled` and those task files, starts
+each schedule entry due since the last dispatch with the `run … --scheduled`
+invocation and the log file (`<cache>/tasks/logs/<id>.log`) the entry's own row
+would have had, and exits. It does not wait for the runs. A task's own run lock
+applies as it does to a row's run: an earlier run still going keeps a v4 run
+from starting and skips a v5 one. The last dispatched minute is kept in
+`<state>/scheduler/dispatch-minute`: a dispatch that starts late evaluates the
+minutes it missed, at most 5, and starts each due entry once; a minute already
+dispatched starts nothing. A machine that was off does not catch up. The
+result is `{ minute, window, started, failures }`; it exits 1 when an enabled
+task could not be read or started, and still starts the others. It checks no
+task target; a target that cannot start fails its run, in the task's history.
+ Each run is recorded as a row in the durable `task_history`
 table (`state.db`), surfaced by `akm doctor log --task <id>` — **not** by the
 event stream (`akm doctor log` without `--task`); there is no
 `task_invoked`/`task_completed` event type on that stream.
@@ -4893,7 +4932,8 @@ exports of different installs cannot be told apart or combined by key.
 
 Collection is enabled at CLI entry, before the full configuration is read (only `usage.capture` is read, from the selected config file, and a missing or broken file leaves capture on), with no network
 transmission of its own and no sampling (the separate [daily usage report](data-and-telemetry.md#daily-usage-report) sends counts). `AKM_EVENT_SOURCE=user|agent|task|improve|audit` supplies
-known provenance and wins. Without it the source is `agent` when an agent harness
+known provenance and wins. Without it the source is `task` for a run the scheduler
+started (`akm task dispatch`, `akm run --scheduled`, `akm task run --scheduled`), `agent` when an agent harness
 is detected from the environment (the way usage events detect it), `user` when
 there is none and a terminal is attached to stdin or stdout, else `unknown`. When a
 harness is detected, rows and aggregates also carry its name as an optional `harness`
@@ -4906,7 +4946,13 @@ finite allowlisted `format`, `detail` and asset `type` choices. Default values a
 marked separately from explicit input. Arguments after `--` retain only their count.
 No raw argv is stored. The resolved `run` asset type is recorded through a narrow
 hook when resolution reaches dispatch, and `show` records the type of the asset it
-showed the same way.
+showed the same way. A command that fails with a classified error keeps its `code`
+on the invocation (`errorCode`) and as a fourth part of its aggregate outcome
+(`usage:2:unresolved:INVALID_FLAG_VALUE`); only akm's own codes are kept. An
+invocation's detail, never its aggregate, also carries `deprecated` (`command`,
+and the Deprecated `flags` typed) when it used a form marked Deprecated, and `task`,
+the ref of the task it ran in (`AKM_TASK_REF`). The report groups those Deprecated
+calls by task under `deprecatedByTask`.
 
 The usage tables (`cli_usage_meta`, `cli_usage_invocations`,
 `cli_usage_aggregates`) live in `metrics.db` in the existing AKM data directory,

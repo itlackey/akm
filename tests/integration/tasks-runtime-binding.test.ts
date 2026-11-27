@@ -8,6 +8,10 @@ import type { SchedulerBackend, SchedulerInstallOptions } from "../../src/tasks/
 import { sandboxRowEnvironment } from "../_helpers/row-environment";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
+/** The warnings about a source-checkout launcher; a sync that writes per-task rows also warns that they are deprecated. */
+const checkoutWarnings = (result: { warnings?: string[] }) =>
+  (result.warnings ?? []).filter((warning) => warning.includes("source checkout"));
+
 /** The row environment a sync from this sandbox writes. */
 const rowEnvironment = sandboxRowEnvironment;
 
@@ -112,10 +116,10 @@ describe("scheduler runtime binding", () => {
         { rebind: true },
       );
 
-      expect(result.warnings).toHaveLength(1);
-      expect(result.warnings?.[0]).toContain("source checkout");
-      expect(result.warnings?.[0]).toContain("/repo/bun /repo/src/cli.ts");
-      expect(result.warnings?.[0]).toContain("--rebind");
+      const warnings = checkoutWarnings(result);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("/repo/bun /repo/src/cli.ts");
+      expect(warnings[0]).toContain("--rebind");
     } finally {
       storage.cleanup();
     }
@@ -156,7 +160,7 @@ describe("scheduler runtime binding", () => {
 
       const first = await akmTasksSync({ backend, schedulerRuntime: checkoutRuntime }, undefined, { rebind: true });
       expect(first.updated).toEqual(["ping"]);
-      expect(first.warnings).toHaveLength(1);
+      expect(checkoutWarnings(first)).toHaveLength(1);
 
       const second = await akmTasksSync({ backend, schedulerRuntime: checkoutRuntime }, undefined, { rebind: true });
       expect(second.unchanged).toEqual(["ping"]);
@@ -170,8 +174,8 @@ describe("scheduler runtime binding", () => {
         undefined,
         { rebind: true },
       );
-      expect(third.warnings).toHaveLength(1);
-      expect(third.warnings?.[0]).toContain("/other/bun /other/src/cli.ts");
+      expect(checkoutWarnings(third)).toHaveLength(1);
+      expect(checkoutWarnings(third)[0]).toContain("/other/bun /other/src/cli.ts");
     } finally {
       storage.cleanup();
     }
@@ -199,7 +203,7 @@ describe("scheduler runtime binding", () => {
         { rebind: true },
       );
 
-      expect(result.warnings).toBeUndefined();
+      expect(checkoutWarnings(result)).toEqual([]);
     } finally {
       storage.cleanup();
     }
