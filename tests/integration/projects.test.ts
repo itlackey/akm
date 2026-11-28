@@ -118,6 +118,9 @@ describe("resolver", () => {
     );
     expect(own?.prefer).toEqual({ team: "x" });
     expect(own?.write.metadata).toEqual({ project: "other", client: "c" });
+    const listed = resolveProject({ projects: { akm: { rules: ["rules/a", "t//rules/b"] } } }, { project: "akm" });
+    expect(listed?.rules).toEqual(["rules/a", "t//rules/b"]);
+    expect(bare?.rules).toBeUndefined();
   });
 });
 
@@ -131,7 +134,7 @@ describe("config", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       projects: {
-        good: { paths: [good, "relative/dir"], from: 5, write: { user: "", bundle: "b" } },
+        good: { paths: [good, "relative/dir"], from: 5, rules: "rules/x", write: { user: "", bundle: "b" } },
         none: { paths: [good] },
         broken: "text",
       },
@@ -141,10 +144,12 @@ describe("config", () => {
     expect(Object.keys(projects ?? {})).toEqual(["good"]);
     expect(projects?.good?.paths).toEqual([good]);
     expect(projects?.good?.from).toBeUndefined();
+    expect(projects?.good?.rules).toBeUndefined();
     expect(projects?.good?.write).toEqual({ bundle: "b" });
     const text = warnings.join("\n");
     expect(text).toMatch(/projects\.good\.paths/);
     expect(text).toMatch(/projects\.good\.from/);
+    expect(text).toMatch(/projects\.good\.rules/);
     expect(text).toMatch(/projects\.broken/);
     expect(text).toMatch(/projects\.none/);
   });

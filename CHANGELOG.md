@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A project can list the rules its sessions load: `projects.<name>.rules`, a list of refs (`["rules/acme/development", "team//rules/review"]`). `akm rules` then returns exactly those, in that order, from any enabled bundle, instead of matching `project:`; a listed ref that is missing, not a rule or proposed is skipped with a warning. `--from` or `--filter` still selects as before. See [`akm rules`](docs/reference/cli.md#rules).
+
 ### Changed
 
 - A stable release also moves npm's `next` tag of `akm-cli` and `akm-web` to it, unless `next` holds a newer line's prerelease, so `akm-cli@next` and `akm-web@next` never trail `latest`.

@@ -2320,6 +2320,8 @@ and they follow `--from`, `--filter`, `--since`/`--until`, disabled bundles and 
 like any asset. A rule of another project is never returned while a project is selected, by
 any search or curate, including `--type rule`.
 
+A project's `rules` list (see [Projects](../reference/configuration.md#projects)) replaces the `project` match: the project's sessions load exactly the listed rules.
+
 A session loads its rules with [`akm rules`](#rules), not with search. The AKM agent plugins
 run it at session start and after compaction; an agent without a plugin runs the same command.
 
@@ -2340,8 +2342,10 @@ akm rules --filter team=platform --format text
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--project <name\|none>` | the project whose path contains the working directory | The project to use instead (`none`: no project); an unknown name is a usage error |
-| `--from <bundle>` | the project's `from` | Bundle name (repeatable), replacing the project's `from`. `local`, `registry` and `all` do not apply to rules: they are ignored with one warning and the default below is read. A disabled or unknown bundle is a usage error |
-| `--filter <key>=<value>` | the project's `filters` | Repeatable frontmatter filter with the matching of `akm search --filter`, replacing the project's `filters` |
+| `--from <bundle>` | the project's `from` | Bundle name (repeatable), replacing the project's `from` (and, with `--filter`, the project's `rules` list: today's selection applies). `local`, `registry` and `all` do not apply to rules: they are ignored with one warning and the default below is read. A disabled or unknown bundle is a usage error |
+| `--filter <key>=<value>` | the project's `filters` | Repeatable frontmatter filter with the matching of `akm search --filter`, replacing the project's `filters` (and the project's `rules` list: today's selection applies) |
+
+**A project's rules list.** A project with `rules` (a list of refs) gets exactly those rules, in list order, and `project:` frontmatter is not consulted. Each ref resolves as `akm show` resolves it (the default bundle first, then the configured order) and may come from any enabled bundle; the project's `from` and `filters` do not touch the list. An explicit `--from` or `--filter` selects as below instead, and `--project none` means no project, so no list. A listed ref that no enabled bundle holds, that is not a rule, or that is proposed warns once on stderr and is skipped; the other rules still load and the exit code is 0. A rule listed twice loads once, at its first position. `bundles` is the distinct bundles of the returned rules in first-appearance order, and may be empty.
 
 **Which bundles supply rules.** A rule is an instruction the agent obeys, so only bundles you
 named supply them. With `--from`, those bundles; else the project's `from`; else, with a

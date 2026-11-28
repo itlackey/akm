@@ -286,7 +286,11 @@ not rule-specific configuration. Write the value the project stamps: its
 `project` is that value for the project in force (`--project`, else the working directory's)
 or when it has none (shared); with no project in force only shared rules apply. Another
 project's rules are never returned while a project is selected. If the project's own `filters`
-constrain `project`, that filter decides instead. Only the bundle's top-level `rules/` folder
+constrain `project`, that filter decides instead.
+
+To pick a project's rules by hand instead, list them in its config:
+`"rules": ["rules/acme/development", "team//rules/review"]`. `akm rules` then returns exactly those,
+in that order, from any enabled bundle, and `project:` is not consulted. Only the bundle's top-level `rules/` folder
 holds rules. After adding `rules/` to a bundle that already has files there, run
 `akm index --full` so search retypes them; `akm rules` reads the files and needs no index.
 

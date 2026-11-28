@@ -15,7 +15,7 @@ akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
 akm search "memories/projectA/"               # Enumerate a subtree (conceptId prefix; trailing slash required)
 akm search "knowledge/"                       # List every knowledge item
-akm rules                                     # The rules that apply here, in full (project's first, then shared)
+akm rules                                     # The rules that apply here, in full (the project's rules list, else project's first, then shared)
 akm doctor metrics assets --detail normal      # Assets shown most in the project
 akm search "team-catalog//"                   # List every item in one bundle
 ```
