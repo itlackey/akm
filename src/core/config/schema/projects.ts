@@ -39,6 +39,7 @@ const ProjectFields = {
   from: z.union([nonEmptyString, z.array(nonEmptyString).min(1)]),
   filters: z.record(nonEmptyString, scopeValues),
   prefer: z.record(nonEmptyString, scopeValues),
+  rules: z.array(nonEmptyString).min(1),
 };
 
 /** A directory a project lives in: absolute, `~` or `~/...` (not `~user/...`). */
@@ -89,6 +90,7 @@ export const ProjectSchema = z
     filters: ProjectFields.filters.optional(),
     include: ProjectFields.include.optional(),
     prefer: ProjectFields.prefer.optional(),
+    rules: ProjectFields.rules.optional(),
     write: ProjectWriteSchema.optional(),
   })
   .passthrough();

@@ -654,6 +654,14 @@
               ]
             }
           },
+          "rules": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
           "write": {
             "type": "object",
             "properties": {
@@ -2673,6 +2681,14 @@
                       }
                     }
                   ]
+                }
+              },
+              "rules": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "write": {

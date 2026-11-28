@@ -28,6 +28,8 @@ export interface ResolvedProject {
   include?: IncludeSelectors;
   /** The project's own, else `project=<name>`. */
   prefer: ScopeFilters;
+  /** The rules its sessions load, as listed; absent: chosen by `project:`. */
+  rules?: string[];
   write: {
     bundle?: string;
     user?: string;
@@ -74,6 +76,7 @@ function toResolved(name: string, project: ProjectConfig, matchedPath?: string):
     ...(project.filters !== undefined ? { filters: project.filters } : {}),
     ...(project.include !== undefined ? { include: IncludeSchema.strip().parse(project.include) } : {}),
     prefer: project.prefer ?? { project: name },
+    ...(project.rules !== undefined ? { rules: project.rules } : {}),
     write: {
       ...(write.bundle !== undefined ? { bundle: write.bundle } : {}),
       ...(write.user !== undefined ? { user: write.user } : {}),

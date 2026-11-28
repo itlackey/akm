@@ -1030,6 +1030,7 @@ what akm reads and writes there:
     "from": ["acme", "personal"],
     "filters": { "channel": ["acme", ""] },
     "prefer": { "team": "consulting" },
+    "rules": ["rules/acme/development", "team//rules/review"],
     "write": { "bundle": "personal", "channel": "acme", "metadata": { "client": "acme" } }
   }
 }
@@ -1041,6 +1042,7 @@ what akm reads and writes there:
 - `from`, `filters`, `prefer`: the defaults for `akm search` and `akm curate`, in the shape of
   `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
   without the key).
+- `rules`: the rules `akm rules` loads for the project, exactly and in order, from any enabled bundle. An unqualified ref resolves as `akm show` does. The list replaces matching by `project:`; a listed ref that does not load warns and is skipped.
 - `include`: retrieval exclusions to relax, e.g. `{ "quality": "proposed", "type": ["session"] }`. Only `quality=proposed` and named types are supported. Each explicit call's include value replaces this whole object; `{}` deliberately supplies no inclusions. Queries, filters, explicit type and source boundaries still apply.
 - `write`: `bundle` (a default for `remember` and `proposal new`, between `--bundle` and
   `defaultWriteTarget`; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,

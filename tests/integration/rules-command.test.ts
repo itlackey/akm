@@ -251,6 +251,49 @@ describe("which bundles are read", () => {
     expect(off.code).toBe(2);
   });
 
+  describe("a project's rules list", () => {
+    test("exactly the listed rules, in list order, from any enabled bundle", async () => {
+      bundles({ rules: ["rules/shared", "other//rules/acme/other", "rules/globex/development"] });
+      const result = await rules("--project", "acme");
+      expect(refs(result)).toEqual(["rules/shared", "other//rules/acme/other", "rules/globex/development"]);
+      expect(refs(result)).not.toContain("rules/acme/development");
+      expect(result.bundles).toEqual(["main", "other"]);
+      const [event] = usageRows("rules");
+      expect((JSON.parse(event?.metadata ?? "{}") as { refs: string[] }).refs).toEqual([
+        "main//rules/shared",
+        "other//rules/acme/other",
+        "main//rules/globex/development",
+      ]);
+    });
+
+    test("an unqualified ref resolves as show does; a duplicate loads once", async () => {
+      bundles({ rules: ["rules/shared", "main//rules/shared", "team//rules/team-shared"] });
+      expect(refs(await rules("--project", "acme"))).toEqual(["rules/shared", "team//rules/team-shared"]);
+    });
+
+    test("a missing ref, a non-rule, a proposed rule and a disabled bundle's rule warn and are skipped; exit 0", async () => {
+      write(stashDir, "knowledge/x.md", { description: "Not a rule" }, "Knowledge.");
+      rule(stashDir, "pending", undefined, { quality: "proposed" });
+      bundles({ rules: ["rules/nope", "knowledge/x", "rules/pending", "off//rules/off-shared", "rules/shared"] });
+      const { code, stdout, stderr } = await runCliCapture(["rules", "--project", "acme", "--format", "json"]);
+      expect(code).toBe(0);
+      expect(refs(JSON.parse(stdout) as RulesOutput)).toEqual(["rules/shared"]);
+      for (const ref of ["rules/nope", "knowledge/x", "rules/pending", "off//rules/off-shared"]) {
+        expect(stderr).toContain(`"${ref}"`);
+      }
+    });
+
+    test("--from or --filter replaces the list with today's selection; --project none ignores it", async () => {
+      bundles({ rules: ["rules/shared"] });
+      expect(refs(await rules("--project", "acme", "--from", "other"))).toEqual([
+        "other//rules/acme/other",
+        "other//rules/other-shared",
+      ]);
+      expect(refs(await rules("--project", "acme", "--filter", "project=acme"))).toEqual(["rules/acme/development"]);
+      expect(refs(await rules("--project", "none"))).toEqual(["rules/shared"]);
+    });
+  });
+
   test("an unknown bundle is a usage error", async () => {
     bundles();
     expect((await runCliCapture(["rules", "--from", "nope"])).code).toBe(2);
