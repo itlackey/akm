@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Every colour the UI draws is a custom property in tokens.css, so an app that embeds the UI can set it
-// (`experimental.web.tokens`). A colour written anywhere else in Desktop's styles, markup or scripts fails here,
+// Every colour the UI draws is a custom property in tokens.css, so an app that embeds the UI can set it with its
+// own style sheet (docs/theming.md). A colour written anywhere else in Desktop's styles, markup or scripts fails here,
 // unless it is listed below with the reason it is not a token.
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

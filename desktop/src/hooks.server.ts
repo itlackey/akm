@@ -42,14 +42,17 @@ export const handle: Handle = async ({ event, resolve }) => {
   // The form posts to /api/session from wherever the page is, which behind a path prefix is not the site root.
   const up = "../".repeat(path.split("/").length - 2);
 
-  // Every response: no caching, and framing allowed for exactly the configured parents or denied.
+  // Every response: no caching, and framing allowed for exactly the configured parents or denied. When framed, style
+  // sheets may also come from those parents: the embedding app's own, named with `?theme=` (hooks.client.ts).
   const finish = (response: Response) => {
     response.headers.set("X-Content-Type-Options", "nosniff");
     if (!response.headers.has("Referrer-Policy")) response.headers.set("Referrer-Policy", "no-referrer");
     response.headers.set("Cache-Control", "no-store");
     if (framed) {
       const directive = `frame-ancestors ${frameParents.join(" ")}`;
-      const csp = response.headers.get("content-security-policy");
+      const csp = response.headers
+        .get("content-security-policy")
+        ?.replace(/style-src[^;]*/, (styles) => `${styles} ${frameParents.join(" ")}`);
       response.headers.delete("X-Frame-Options");
       response.headers.set(
         "Content-Security-Policy",
@@ -142,9 +145,6 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (!byHeader) return refuse(403, "FORBIDDEN", "A login link is issued only to a request that carries the secret.");
     return finish(Response.json({ url: `${origin}/?login=${startLink()}` }));
   }
-  // The embedding app's token overrides (`experimental.web.tokens`), which app.html links after the UI's own styles.
-  if (method === "GET" && path === "/theme.css")
-    return finish(new Response(web.theme ?? "", { headers: { "Content-Type": "text/css; charset=utf-8" } }));
   if (method === "POST" && path === "/api/session/logout") {
     endSession(sessionId);
     return finish(Response.json({ ok: true }, { headers: { "Set-Cookie": cookie("", "; Max-Age=0") } }));

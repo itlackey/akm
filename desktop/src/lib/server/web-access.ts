@@ -7,13 +7,11 @@ import { randomBytes } from "node:crypto";
 /**
  * What the server hands the request hook: the settings it resolved at startup. `secret` is the only credential.
  * `inflight` is the server's count of requests being served, which `GET /api/session` reports as `active`.
- * `theme` is the stylesheet of `experimental.web.tokens` (server.mjs builds it), served as `theme.css`.
  */
 export interface WebState {
   secret: string;
   origin: string;
   frameParents: string[];
-  theme?: string;
   inflight?: number;
 }
 

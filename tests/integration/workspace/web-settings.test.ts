@@ -43,9 +43,8 @@ describe("experimental.web schema", () => {
     expect(parse({ allowedHosts: ["akm.internal", "akm.internal:8080", "10.0.0.5", "[::1]", "[::1]:3000"] })).toBe(
       true,
     );
-    expect(
-      parse({ tokens: { "--accent": "#0a7f5a", "--font": '"Noto Serif", serif', "--bg": "light-dark(#fff, #111)" } }),
-    ).toBe(true);
+    // A key akm does not read, such as `tokens`, still loads: `web` passes unknown keys through.
+    expect(parse({ tokens: { "--accent": "#0a7f5a" } })).toBe(true);
   });
 
   test.each([
@@ -69,15 +68,6 @@ describe("experimental.web schema", () => {
     [{ allowedHosts: ["akm.internal:"] }],
     [{ allowedHosts: ["*.internal"] }],
     [{ allowedHosts: [""] }],
-    [{ tokens: { accent: "#0a7f5a" } }],
-    [{ tokens: { "--accent": "red} body { display: none" } }],
-    [{ tokens: { "--accent": "red; color: blue" } }],
-    [{ tokens: { "--accent": "red\ncolor: blue" } }],
-    [{ tokens: { "--accent": "red /* rest" } }],
-    [{ tokens: { "--accent": "\\7d" } }],
-    [{ tokens: { "--font": '"Noto Serif, serif' } }],
-    [{ tokens: { "--accent": " " } }],
-    [{ tokens: { "--accent": 5 } }],
   ])("refuses %j", (web) => {
     expect(parse(web)).toBe(false);
   });
@@ -97,7 +87,6 @@ describe("config.webSettings", () => {
       secret: "$WEB_TEST_SECRET",
       allowedHosts: ["akm.internal"],
       frameParents: ["https://app.example.com"],
-      tokens: { "--accent": "#0a7f5a" },
     });
     expect(config.webSettings()).toEqual({
       host: "0.0.0.0",
@@ -105,7 +94,6 @@ describe("config.webSettings", () => {
       origin: "https://akm.example.com",
       allowedHosts: ["akm.internal"],
       frameParents: ["https://app.example.com"],
-      tokens: { "--accent": "#0a7f5a" },
       secret: "s".repeat(40),
     });
   });
