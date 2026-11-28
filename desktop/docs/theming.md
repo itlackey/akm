@@ -1,7 +1,7 @@
 # Theming
 
 Every colour, font, type size, radius, shadow, focus ring, spacing step and page dimension the UI draws is a CSS custom
-property on `:root`, defined once in [`src/lib/ui/tokens.css`](../src/lib/ui/tokens.css) inside `@layer tokens`.
+property on `#akm-web` (the UI's `html` element), defined once in [`src/lib/ui/tokens.css`](../src/lib/ui/tokens.css) inside `@layer tokens`.
 Styles, components, charts and maps read these properties; charts and the library maps read the computed value when
 they draw, so a changed token reaches them too. `tests/style-tokens.test.mjs` fails on a colour written anywhere else.
 
@@ -10,12 +10,10 @@ forces either. Other tokens are the same in both schemes.
 
 ## Match your app
 
-An app that shows the UI in a frame cannot reach into the frame's styles, and a frame does not inherit its parent's
-custom properties. The app writes its own style sheet instead, a CSS file that sets the tokens it wants on `:root`:
+An app sets the tokens it wants with its own CSS on `#akm-web`, added to the UI's document:
 
 ```css
-/* https://app.example/akm-theme.css */
-:root {
+#akm-web {
   --accent: light-dark(#0a7f5a, #5fd3a6);
   --accent-hover: light-dark(#086848, #86e0bd);
   --link: light-dark(#086848, #86e0bd);
@@ -25,33 +23,41 @@ custom properties. The app writes its own style sheet instead, a CSS file that s
 }
 ```
 
-It serves the file from its own origin, names that origin in `frameParents` (in `experimental.web` of the akm config,
-which also lets it frame the UI), and puts the file's absolute address in the frame's `theme` parameter (URL-encoded
-if it has a query of its own):
+Any style outside a cascade layer wins over `@layer tokens` at every width (a token that changes below a width, such as
+`--control-height`, takes the given value at all widths). Give a colour as a `light-dark()` pair and leave
+`color-scheme` alone, so the Theme control keeps both schemes; a single colour is used in both.
 
-```html
-<iframe src="https://akm.example/?theme=https://app.example/akm-theme.css"></iframe>
-```
+- **A frame on the same origin** (the app and the UI behind one proxy): add a style to the frame's document when it
+  loads.
 
-The UI links the sheet once, at startup, after its own styles. The sheet is outside every cascade layer, so it wins over
-`@layer tokens` at every width (a token that changes below a width, such as `--control-height`, takes the given value
-at all widths). Give a colour as a `light-dark()` pair to keep both schemes; a single colour is used in both. The frame
-keeps the sheet for its session, across navigation and reloads; a later `theme` replaces it. A `theme` that is not an
-absolute `http` or `https` address is ignored.
+  ```js
+  frame.addEventListener("load", () => {
+    const style = frame.contentDocument.createElement("style");
+    style.textContent = css;
+    frame.contentDocument.head.append(style);
+  });
+  ```
 
-The browser decides what loads. With `frameParents` set, the page's Content Security Policy allows style sheets from
-the UI's own origin and exactly those origins (`style-src 'self' 'unsafe-inline' https://app.example`), so a sheet from
-any other origin is refused. Without `frameParents` the policy is unchanged, and only a sheet from the UI's own origin
-loads: one behind a reverse proxy that serves the app and the UI on one origin, for example. The login form is a
-separate page with its own minimal style and does not use the tokens. AKM Desktop is never framed, so none of this
-applies to it.
+- **A frame on another origin**: the browser keeps the parent out of the frame's document, so the parent sends the CSS
+  and the UI adds it. When the UI is ready, on every load, it posts `{ akmReady: true }` to its parent; the parent
+  answers with the CSS. Only a message from the frame's parent page is used, and `frameParents` already decides who
+  that can be.
 
-A sheet is still a style sheet: one that points `--bg` at an unreadable colour gets an unreadable page. Check contrast
-for text tokens (`--text`, `--muted`, `--faint`, `--link`) against `--bg` and `--surface`, and keep the map and replay
-colours apart (see `tests/map-palette.test.mjs` for what the defaults meet).
+  ```js
+  addEventListener("message", (event) => {
+    if (event.origin === "https://akm.example" && event.data?.akmReady)
+      event.source.postMessage({ akmCss: css }, event.origin);
+  });
+  ```
 
-A page or extension that controls the UI's own document, rather than framing it, can set the same custom properties on
-`:root` directly.
+- **A page or extension that controls the UI's own document** adds the style directly. AKM Desktop is never framed and
+  needs none of this.
+
+The login form is a separate page with its own minimal style and does not use the tokens.
+
+CSS is still CSS: a `--bg` set to an unreadable colour gets an unreadable page. Check contrast for text tokens
+(`--text`, `--muted`, `--faint`, `--link`) against `--bg` and `--surface`, and keep the map and replay colours apart
+(see `tests/map-palette.test.mjs` for what the defaults meet).
 
 ## What stays literal
 

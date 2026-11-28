@@ -104,3 +104,10 @@ test("every token in tokens.css is in the theming reference, and the reference n
   const documented = new Set(reference.match(/(?<=^\| `)--[a-z0-9-]+(?=` \|)/gm));
   assert.deepEqual([...defined].sort(), [...documented].sort());
 });
+
+test("the tokens are on #akm-web, the html element, so an app's own `#akm-web { … }` sets them", () => {
+  const tokens = readFileSync(path.join(src, "lib/ui/tokens.css"), "utf8");
+  assert.doesNotMatch(tokens, /:root\b/);
+  assert.match(tokens, /#akm-web \{/);
+  assert.match(readFileSync(path.join(src, "app.html"), "utf8"), /<html[^>]*\bid="akm-web"/);
+});

@@ -213,7 +213,7 @@ may change in 0.11. Flags apply to one run and override the config key of the sa
 | `origin` | `--origin <url>` | The address the browser uses: `http(s)://host[:port]`, no path. It differs from the listen address behind a Docker port mapping or a proxy. It is required with a wildcard host (`0.0.0.0`, `::`). An `https` origin marks the session cookie `Secure`. | the bound address |
 | `secret` | | Reference to the secret. | none |
 | `allowedHosts` | | Extra `Host` values to accept, for a proxy that reaches `akm-web` under a private name. Each entry is a host name or address with an optional port (`akm-internal`, `akm-internal:8080`, `[::1]:3000`), no scheme and no path. Without a port it accepts that host on any port; with a port, only that port. The origin's default port (80 for `http`, 443 for `https`) is the same as no port. | none: only the origin's host |
-| `frameParents` | | Origins allowed to show the UI in a frame, and to serve the style sheet it names with `?theme=`. Exact origins only: a wildcard is refused. | none: framing is denied |
+| `frameParents` | | Origins allowed to show the UI in a frame. Exact origins only: a wildcard is refused. | none: framing is denied |
 | | `--open` | Open the UI in the default browser. Nothing opens without it. | |
 | | `--auto-login` | With `--open`: the browser arrives logged in, through a one-time login link that is not printed. Without it, the browser shows the login form. | |
 
@@ -367,11 +367,8 @@ everyone. Without `frameParents` the cookie is `SameSite=Strict`.
 ##### Match the app's look
 
 The UI's colours, fonts, type sizes, radii, shadows, focus ring, spacing and page dimensions are CSS custom properties.
-An app that frames it sets them in a style sheet of its own and names that sheet in the frame's address:
-`https://akm.example/?theme=https://app.example/akm-theme.css`. The UI links it after its own styles. With
-`frameParents` set, the page's policy (`style-src`) allows style sheets from exactly those origins, so a sheet from any
-other origin does not load. [Theming](docs/theming.md) lists every token with its light and dark defaults, and shows an
-example.
+An app sets them with its own CSS on `#akm-web`, added to the UI's document (or sent to a frame on another origin
+as a message). [Theming](docs/theming.md) lists every token with its light and dark defaults, and shows how.
 
 #### Example: Azure Container Apps
 

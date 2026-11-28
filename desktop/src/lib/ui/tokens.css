@@ -3,8 +3,8 @@
 
 /* Design tokens: colour (a light-dark() pair per token), space, type, radius and layout vocabulary. */
 @layer tokens {
-  /* Desktop design tokens. Colours, space, type, radius and elevation are tokens on :root; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
-  :root {
+  /* Desktop design tokens. Colours, space, type, radius and elevation are tokens on #akm-web (the html element), so an embedding app overrides them with its own unlayered `#akm-web { … }`; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
+  #akm-web {
     color-scheme: light dark;
     accent-color: var(--accent);
     --bg: light-dark(#f7f7fa, #15151a);
@@ -138,23 +138,23 @@
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   }
 
-  :root[data-theme="light"] {
+  #akm-web[data-theme="light"] {
     color-scheme: light;
   }
 
-  :root[data-theme="dark"] {
+  #akm-web[data-theme="dark"] {
     color-scheme: dark;
   }
 
   @media (width < 72rem) {
-    :root {
+    #akm-web {
       --topbar-h: 3.5rem;
     }
   }
 
   /* Phones: the bar is one row of tabs, controls are taller to touch, and the workspace gives up the bar's height. */
   @media (width < 48rem) {
-    :root {
+    #akm-web {
       --top-inset: 3.5rem;
       --workspace-height: calc(100dvh - 190px);
       --control-height: 2.75rem;
