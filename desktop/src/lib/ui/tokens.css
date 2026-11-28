@@ -52,7 +52,7 @@
     --map-4: light-dark(#8d9258, #f1ea3d);
     --map-5: light-dark(#0245a0, #8b55f6);
     --map-6: light-dark(#a13500, #b16d56);
-    --map-7: light-dark(#bc74c5, #755564);
+    --map-7: light-dark(#bc74c5, #795a69);
     --map-8: light-dark(#383838, #a6a6a6);
     --map-highlight: light-dark(#8c00ff, #cdffcd);
     /* Replay's pulses, one colour per event kind (read, search hit, positive and negative feedback), measured by
@@ -61,7 +61,7 @@
     --pulse-read: light-dark(#00000f, #00a5c3);
     --pulse-hit: light-dark(#e100e1, #f05aff);
     --pulse-up: light-dark(#00782d, #e1ff69);
-    --pulse-down: light-dark(#f01e3c, #c3001e);
+    --pulse-down: light-dark(#f01e3c, #c60d29);
     /* "Use" colouring: one hue in four steps, each step farther from --bg than the last (3.3, 5.2, 8 and 12 to 1), and a
        quieter mark for "never shown" that stays visible but is fainter than every used step. */
     --use-0: light-dark(#cbcfd6, #3b404b);
