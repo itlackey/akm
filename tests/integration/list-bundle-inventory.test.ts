@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 import { main } from "../../src/cli";
 import { akmListSources } from "../../src/commands/sources/installed-stashes";
@@ -10,6 +11,7 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
 import { writeLockfile } from "../../src/integrations/lockfile";
+import { getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../../src/storage/repositories/index-entry-types";
@@ -132,6 +134,29 @@ describe("akm list bundle inventory", () => {
       itemCount: 2,
       byType: { knowledge: 2 },
     });
+  });
+
+  test("a git bundle with no lock entry lists the mirror search reads, once it is cloned", async () => {
+    const url = "https://example.test/config-only.git";
+    writeSandboxConfig({
+      bundles: {
+        primary: { path: storage.stashDir, adapter: "akm", writable: true },
+        "config-only": { git: url, adapter: "akm", writable: true },
+      },
+      defaultBundle: "primary",
+    });
+    resetConfigCache();
+    const listed = async () =>
+      (await akmListSources({ stashDir: storage.stashDir })).sources.find((source) => source.name === "config-only");
+
+    // Not cloned yet: no path, as before.
+    expect((await listed())?.path).toBeUndefined();
+    expect((await listed())?.status.exists).toBe(true);
+
+    const repoDir = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
+    fs.mkdirSync(path.join(repoDir, "agents"), { recursive: true });
+    expect(await listed()).toMatchObject({ path: repoDir, lock: null, status: { exists: true } });
+    expect((await listed())?.version).toBeUndefined();
   });
 
   test("filters by current provider kinds", async () => {
