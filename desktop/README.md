@@ -214,6 +214,7 @@ may change in 0.11. Flags apply to one run and override the config key of the sa
 | `secret` | | Reference to the secret. | none |
 | `allowedHosts` | | Extra `Host` values to accept, for a proxy that reaches `akm-web` under a private name. Each entry is a host name or address with an optional port (`akm-internal`, `akm-internal:8080`, `[::1]:3000`), no scheme and no path. Without a port it accepts that host on any port; with a port, only that port. The origin's default port (80 for `http`, 443 for `https`) is the same as no port. | none: only the origin's host |
 | `frameParents` | | Origins allowed to show the UI in a frame. Exact origins only: a wildcard is refused. | none: framing is denied |
+| `tokens` | | The UI's look: CSS custom properties and their values (`{"--accent": "#0a7f5a"}`), served after the UI's own. See [Theming](docs/theming.md). | none: the UI's own |
 | | `--open` | Open the UI in the default browser. Nothing opens without it. | |
 | | `--auto-login` | With `--open`: the browser arrives logged in, through a one-time login link that is not printed. Without it, the browser shows the login form. | |
 
@@ -363,6 +364,14 @@ or `https`. On different sites the origin must be `https`: the cookie then becom
 Partitioned`, which is what a browser needs before it sends a cookie inside a frame on another site. It still depends
 on the browser accepting it, and some browsers block cookies in frames from another site, so this will not work for
 everyone. Without `frameParents` the cookie is `SameSite=Strict`.
+
+##### Match the app's look
+
+The UI's colours, fonts, type sizes, radii, shadows, focus ring, spacing and page dimensions are CSS custom properties.
+An app that embeds it sets them with `tokens`, next to `frameParents`: `akm-web` serves them as one `:root` rule after
+the UI's own styles, behind the same secret and `Host` checks, with no change to the page's policy. Names and values are
+validated so the rule can set nothing else. [Theming](docs/theming.md) lists every token with its light and dark
+defaults, and shows an example.
 
 #### Example: Azure Container Apps
 

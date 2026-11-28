@@ -27,7 +27,7 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `src/lib/drafts.ts` | Stored editor drafts (session storage), the unsaved flag, and re-keying drafts when a bundle is renamed |
 | `src/lib/*.svelte` | Presentation and review confirmation |
 | `src/lib/navigation.ts` | `goto` for in-app navigation, so Back/forward goes through `beforeNavigate` |
-| `src/lib/ui/` | Desktop-owned presentation: design tokens, escaped Markdown, diff and chart rendering |
+| `src/lib/ui/` | Desktop-owned presentation: design tokens (`tokens.css`, the one place a style value is written), escaped Markdown, diff and chart rendering |
 | `akm-cli/workspace` | Typed operations: reads, writes, validation, policy (revisions, leases, writability), proposals, persistence |
 
 The namespace is a set of typed operations grouped by capability (assets, documents, proposals, bundles, config,
@@ -136,7 +136,8 @@ the secret from its environment under every name that holds it (`AKM_WEB_SECRET`
 or an allowed host (a name or address with an optional port; checked before the framework sees the request, which is then given the configured origin), and
 every write must carry an `Origin` equal to the origin, programs included. Only a `Bearer` credential is the secret's
 header; a wrong one is refused with `401` and never falls back to the cookie. The app validates JSON body sizes, does not
-enable CORS and sends `Cache-Control: no-store`. The secret is redacted by AKM's configuration inspector. Framing is
+enable CORS and sends `Cache-Control: no-store`. The secret is redacted by AKM's configuration inspector. `experimental.web.tokens` is served, behind the same checks, as `theme.css`: one `:root` rule of
+validated custom properties that the page links after its own styles ([Theming](theming.md)). Framing is
 denied unless `frameParents` names origins, which then replace the `frame-ancestors` directive; with an `https`
 origin the cookie then becomes `SameSite=None; Secure; Partitioned`. On `SIGTERM`, `SIGINT` or the `shutdown` message
 the server stops accepting connections and gives requests in flight and running child processes up to 10 seconds. It

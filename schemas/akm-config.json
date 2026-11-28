@@ -2018,6 +2018,17 @@
               "items": {
                 "type": "string"
               }
+            },
+            "tokens": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^--[A-Za-z0-9-]+$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 500
+              }
             }
           },
           "additionalProperties": {}
@@ -4046,6 +4057,17 @@
                   "type": "array",
                   "items": {
                     "type": "string"
+                  }
+                },
+                "tokens": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^--[A-Za-z0-9-]+$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 500
                   }
                 }
               },

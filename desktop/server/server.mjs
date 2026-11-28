@@ -44,7 +44,8 @@ async function prepareEnvironment() {
  * (`resolveSettings`). `host` is the bind address. `origin` is the address the browser uses, which differs from the bind
  * behind a Docker port mapping or a proxy; it defaults to the bind address and the port actually chosen.
  * `allowedHosts` are extra `Host` names accepted, for a proxy that reaches the server under a private name.
- * @param {{ host?: string, port?: number, origin?: string, secret: string, allowedHosts?: string[], frameParents?: string[] }} options
+ * `tokens` are UI custom properties (`--accent`) and values, served as `theme.css` after the UI's own tokens.
+ * @param {{ host?: string, port?: number, origin?: string, secret: string, allowedHosts?: string[], frameParents?: string[], tokens?: Record<string, string> }} options
  */
 export async function startServer({
   host = "127.0.0.1",
@@ -53,11 +54,13 @@ export async function startServer({
   secret,
   allowedHosts = [],
   frameParents = [],
+  tokens = {},
 }) {
   const configuredOrigin = configured === undefined ? undefined : parseOrigin(configured, "origin");
   validateSecret(secret);
   for (const entry of allowedHosts) validateAllowedHost(entry);
   const frames = frameParents.map((parent) => parseOrigin(parent, "frameParents entry"));
+  const theme = themeSheet(tokens);
   await prepareEnvironment();
   /** @type {import("node:http").RequestListener | undefined} */
   let handler;
@@ -68,7 +71,7 @@ export async function startServer({
   /** @type {Set<string>} */
   const refused = new Set();
   // The settings the request hook reads (src/lib/server/web-access.ts). `inflight` backs GET /api/session `active`.
-  const web = { secret, origin: "", frameParents: frames, inflight: 0 };
+  const web = { secret, origin: "", frameParents: frames, theme, inflight: 0 };
   /** @type {{ __akmWeb?: typeof web }} */ (globalThis).__akmWeb = web;
   const server = http.createServer((req, res) => {
     web.inflight++;
@@ -257,6 +260,33 @@ function parseOrigin(value, name) {
   return url.origin;
 }
 
+/**
+ * The stylesheet of `tokens`: one `:root` rule that sets only the named custom properties. Each name is a custom
+ * property and each value can end neither its declaration nor the rule (no `;`, braces, backslash, line break, comment
+ * or unbalanced quote), so the sheet can do nothing else. It is unlayered, so it wins over the UI's `@layer tokens`.
+ * @param {Record<string, string>} tokens
+ */
+function themeSheet(tokens) {
+  const lines = Object.entries(tokens).map(([name, value]) => {
+    const balanced = (/** @type {string} */ mark) => value.split(mark).length % 2 === 1;
+    if (!/^--[A-Za-z0-9-]+$/.test(name))
+      throw new Error(`tokens entry "${name}" must be a CSS custom property name such as --accent.`);
+    if (
+      typeof value !== "string" ||
+      !/\S/.test(value) ||
+      value.length > 500 ||
+      /[;{}\\\r\n]|\/\*/.test(value) ||
+      !balanced('"') ||
+      !balanced("'")
+    )
+      throw new Error(
+        `tokens entry "${name}" must be one CSS value, with no ;, {, }, backslash, line break, comment or unbalanced quote.`,
+      );
+    return `  ${name}: ${value};`;
+  });
+  return lines.length ? `:root {\n${lines.join("\n")}\n}\n` : "";
+}
+
 /** @param {string | undefined} secret */
 function validateSecret(secret) {
   if (!secret)
@@ -291,7 +321,7 @@ function parseArgs(argv) {
 
 /**
  * The web settings in akm's config (`experimental.web`), through akm-cli. Nothing is configured when akm-cli has none.
- * @returns {Promise<{ host?: string, port?: number, origin?: string, allowedHosts: string[], frameParents: string[], secret?: string }>}
+ * @returns {Promise<{ host?: string, port?: number, origin?: string, allowedHosts: string[], frameParents: string[], tokens?: Record<string, string>, secret?: string }>}
  */
 /** @param {boolean} overridden */
 async function webSettings(overridden) {
@@ -304,7 +334,8 @@ async function webSettings(overridden) {
  * Flags override the config per key; the environment's AKM_WEB_SECRET overrides the configured secret. The secret is
  * removed from the environment here, under every name that holds it (AKM_WEB_SECRET, or the variable a configured
  * `$NAME` reference names), so CLI children never inherit it. AKM Desktop (AKM_DESKTOP_NATIVE=1) reads none of
- * `experimental.web`: loopback, the given or a free port, the bound address as origin, no extra hosts, no frame parents.
+ * `experimental.web`: loopback, the given or a free port, the bound address as origin, no extra hosts, no frame parents,
+ * no token overrides.
  * @param {Record<string, string | true>} args
  * @param {NodeJS.ProcessEnv} env
  */
@@ -327,7 +358,14 @@ async function readSettings(args, env) {
   if (args["auto-login"] && !args.open)
     throw new Error("--auto-login needs --open: it logs in the browser that --open starts.");
   if (env.AKM_DESKTOP_NATIVE === "1")
-    return { host: "127.0.0.1", port: port ?? 0, secret: envSecret || undefined, allowedHosts: [], frameParents: [] };
+    return {
+      host: "127.0.0.1",
+      port: port ?? 0,
+      secret: envSecret || undefined,
+      allowedHosts: [],
+      frameParents: [],
+      tokens: {},
+    };
   const web = await webSettings(Boolean(envSecret));
   return {
     host: /** @type {string | undefined} */ (args.host) || web.host,
@@ -336,6 +374,7 @@ async function readSettings(args, env) {
     secret: envSecret || web.secret,
     allowedHosts: web.allowedHosts ?? [],
     frameParents: web.frameParents ?? [],
+    tokens: web.tokens ?? {},
   };
 }
 

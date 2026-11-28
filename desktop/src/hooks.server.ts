@@ -142,6 +142,9 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (!byHeader) return refuse(403, "FORBIDDEN", "A login link is issued only to a request that carries the secret.");
     return finish(Response.json({ url: `${origin}/?login=${startLink()}` }));
   }
+  // The embedding app's token overrides (`experimental.web.tokens`), which app.html links after the UI's own styles.
+  if (method === "GET" && path === "/theme.css")
+    return finish(new Response(web.theme ?? "", { headers: { "Content-Type": "text/css; charset=utf-8" } }));
   if (method === "POST" && path === "/api/session/logout") {
     endSession(sessionId);
     return finish(Response.json({ ok: true }, { headers: { "Set-Cookie": cookie("", "; Max-Age=0") } }));

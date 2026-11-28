@@ -225,6 +225,8 @@ export namespace config {
     origin?: string;
     allowedHosts: string[];
     frameParents: string[];
+    /** `experimental.web.tokens`: UI custom properties (`--accent`) and the values akm-web serves in place of the defaults. */
+    tokens?: Record<string, string>;
     secret?: string;
   };
   /** Set the embedding model as `akm setup` does (local, a model on the default connection, or an endpoint with a `{ env }` or `{ pasted }` key); a pasted key goes to credentials.json, never config.json. */

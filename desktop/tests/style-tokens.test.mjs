@@ -96,3 +96,11 @@ test("the guard finds a colour in a style sheet, a component's style, its markup
   assert.deepEqual(literals(write("c.svelte", '<a href="#main">x</a><style>.z { color: var(--text); }</style>')), []);
 });
 
+test("every token in tokens.css is in the theming reference, and the reference names no other", () => {
+  const defined = new Set(
+    readFileSync(path.join(src, "lib/ui/tokens.css"), "utf8").match(/(?<=^\s*)--[a-z0-9-]+(?=:)/gm),
+  );
+  const reference = readFileSync(new URL("../docs/theming.md", import.meta.url), "utf8");
+  const documented = new Set(reference.match(/(?<=^\| `)--[a-z0-9-]+(?=` \|)/gm));
+  assert.deepEqual([...defined].sort(), [...documented].sort());
+});

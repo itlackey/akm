@@ -162,3 +162,21 @@ test("allowedHosts entries are validated at startup", async () => {
     );
   }
 });
+
+test("tokens entries are validated at startup: a custom property name and one value that cannot leave it", async () => {
+  const refused = [
+    [{ color: "red" }, /tokens entry "color" must be a CSS custom property name/],
+    [{ "--a b": "red" }, /must be a CSS custom property name/],
+    [{ "--accent": "red} body { display: none" }, /must be one CSS value/],
+    [{ "--accent": "red; color: blue" }, /must be one CSS value/],
+    [{ "--accent": "red\n}\nbody { display: none }" }, /must be one CSS value/],
+    [{ "--accent": "red /* the rest" }, /must be one CSS value/],
+    [{ "--accent": "\\7d body" }, /must be one CSS value/],
+    [{ "--font": '"Open Sans, serif' }, /must be one CSS value/],
+    [{ "--font": "'Open Sans, serif" }, /must be one CSS value/],
+    [{ "--accent": " " }, /must be one CSS value/],
+    [{ "--accent": "x".repeat(501) }, /must be one CSS value/],
+  ];
+  for (const [tokens, message] of refused)
+    await assert.rejects(startServer({ secret: "s".repeat(32), tokens }), message, JSON.stringify(tokens));
+});
