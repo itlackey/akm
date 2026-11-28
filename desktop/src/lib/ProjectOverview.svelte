@@ -14,6 +14,7 @@
     scopeText,
     type BundleCount,
     type Overview,
+    type RuleChoices,
     type ProjectRow,
   } from "./projects-model";
   import type { Bundle } from "./types";
@@ -31,7 +32,13 @@
       error = (cause as Error).message;
     }
   }
-  onMount(load);
+  let rules = $state<RuleChoices | null>(null);
+  onMount(() => {
+    void load();
+    api<RuleChoices>("/rules/choices", { project: row.name })
+      .then((found) => (rules = found))
+      .catch(() => {});
+  });
 
   const entry = $derived(row.entry);
   const providers: Record<string, string> = {
@@ -179,6 +186,28 @@
     <p class="muted small">Ranks matching assets first. It does not change which assets are eligible.</p>
   </section>
 </div>
+
+<section aria-labelledby="rules">
+  <h2 id="rules">Rules</h2>
+  {#if entry.rules?.length}<ol class="plain">
+      {#each entry.rules as ref}
+        {@const item = rules?.listed.find((rule) => rule.ref === ref)}
+        <li>
+          <span class="mono wrap">{ref}</span>
+          {#if item?.problem}<span class="badge" data-tone="fail">Not found</span>
+            <span class="muted small">{item.problem}</span>{:else if item?.description}<span class="muted small"
+              >{item.description}</span
+            >{/if}
+        </li>
+      {/each}
+    </ol>
+    <p class="muted small">This list replaces automatic selection: only these rules load, in this order.</p>
+  {:else}<p class="muted">
+      No list. This project gets the rules marked project={row.name} plus the shared rules{#if rules}: {#if rules.applies.length}<span
+            class="mono wrap">{rules.applies.map((rule) => rule.ref).join(", ")}</span
+          >{:else}none are in the enabled bundles{/if}{/if}.
+    </p>{/if}
+</section>
 
 <section aria-labelledby="writes">
   <h2 id="writes">Writes</h2>

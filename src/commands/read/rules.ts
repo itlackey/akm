@@ -98,6 +98,13 @@ function ruleEntry(asset: Asset): IndexDocument | undefined {
   return indexRowEntry(document, path.basename(asset.conceptId));
 }
 
+function defaultBundleOf(
+  config: ReturnType<typeof loadConfig>,
+  sources: Array<{ isDefault?: boolean; bundleId: string }>,
+) {
+  return config.defaultBundle ?? sources.find((source) => source.isDefault)?.bundleId;
+}
+
 function foundRule(asset: Asset, entry: IndexDocument, defaultBundle: string | undefined): FoundRule {
   const named = entry.frontmatter?.project;
   return {
@@ -110,39 +117,36 @@ function foundRule(asset: Asset, entry: IndexDocument, defaultBundle: string | u
   };
 }
 
+/** What a listed ref loads: its asset and description, or why it loads nothing. */
+function checkListed(ref: string): { asset: Asset; entry: IndexDocument } | { why: string } {
+  const asset = lookupAsset(ref);
+  if (!asset) return { why: "no enabled bundle holds it" };
+  const entry = asset.conceptId.startsWith(RULES_PREFIX) ? ruleEntry(asset) : undefined;
+  if (!entry) return { why: "it is not a rule (a file in a bundle's top-level rules/ folder)" };
+  if (isProposedQuality(entry.quality)) return { why: "it is proposed; it loads once accepted" };
+  return { asset, entry };
+}
+
 /** The project's listed rules, in list order, each ref resolved as `akm show` resolves it; one naming no loadable rule warns and is skipped. */
 function listedRules(project: ResolvedProject & { rules: string[] }, defaultBundle: string | undefined): FoundRule[] {
   const found = new Map<string, FoundRule>();
   for (const ref of project.rules) {
-    const asset = lookupAsset(ref);
-    const entry = asset?.conceptId.startsWith(RULES_PREFIX) ? ruleEntry(asset) : undefined;
-    const why = !asset
-      ? "no enabled bundle holds it"
-      : !entry
-        ? "it is not a rule (a file in a bundle's top-level rules/ folder)"
-        : isProposedQuality(entry.quality)
-          ? "it is proposed; it loads once accepted"
-          : undefined;
-    if (why || !asset || !entry) {
+    const checked = checkListed(ref);
+    if ("why" in checked) {
       warnOnce(
         `rules:listed:${project.name}:${ref}`,
-        `Skipping rule "${ref}" listed by project "${project.name}": ${why}.`,
+        `Skipping rule "${ref}" listed by project "${project.name}": ${checked.why}.`,
       );
       continue;
     }
-    if (!found.has(asset.ref)) found.set(asset.ref, foundRule(asset, entry, defaultBundle));
+    if (!found.has(checked.asset.ref))
+      found.set(checked.asset.ref, foundRule(checked.asset, checked.entry, defaultBundle));
   }
   return [...found.values()];
 }
 
-export function akmRules(input: {
-  from?: string | string[];
-  filters?: string[];
-  /** The project to use (`--project`); absent: the one `cwd` selects. */
-  project?: string;
-  cwd?: string;
-  eventSource?: UsageEventSource;
-}): RulesResult {
+/** The rules a call loads, before anything is recorded. */
+function selectRules(input: { from?: string | string[]; filters?: string[]; project?: string; cwd?: string }) {
   const config = loadConfig();
   const project = resolveProject(config, { project: input.project, cwd: input.cwd });
   const { filters, view } = withProjectDefaults(project, {
@@ -150,7 +154,7 @@ export function akmRules(input: {
     filters: parseScopeFilterFlags(input.filters ?? [], "--filter"),
   });
   const sources = resolveReadSources(undefined, config).sources;
-  const defaultBundle = config.defaultBundle ?? sources.find((s) => s.isDefault)?.bundleId;
+  const defaultBundle = defaultBundleOf(config, sources);
   let bundles: string[];
   let found: FoundRule[];
   if (project?.rules && input.from === undefined && !input.filters?.length) {
@@ -187,6 +191,18 @@ export function akmRules(input: {
     found.sort((a, b) => Number(a.shared) - Number(b.shared) || compareCodePoints(a.ref, b.ref));
   }
 
+  return { project, view, bundles, found };
+}
+
+export function akmRules(input: {
+  from?: string | string[];
+  filters?: string[];
+  /** The project to use (`--project`); absent: the one `cwd` selects. */
+  project?: string;
+  cwd?: string;
+  eventSource?: UsageEventSource;
+}): RulesResult {
+  const { project, view, bundles, found } = selectRules(input);
   const rules = found.map(({ shared: _shared, durableRef: _durableRef, ...rule }) => rule);
   recordRulesUsage({
     project: stampedProject(project),
@@ -196,6 +212,40 @@ export function akmRules(input: {
     eventSource: input.eventSource ?? resolveUsageEventSource(),
   });
   return { schemaVersion: 1, ...(view ? { project: view } : {}), bundles, rules };
+}
+
+/**
+ * What a project's rules setting can choose from and where it stands, for a host's picker; records no usage event.
+ * `available`: every loadable rule of the enabled bundles, as `akm rules` prints its ref. With a `project`:
+ * `listed`, each ref of its `rules` as written, with the rule it resolves to or why it loads nothing, and `applies`,
+ * the rules `akm rules` loads for it now.
+ */
+export function ruleChoices(input: { project?: string }) {
+  const config = loadConfig();
+  const defaultBundle = defaultBundleOf(config, resolveReadSources(undefined, config).sources);
+  const described = (asset: Asset, entry: IndexDocument) => ({
+    ref: displayRefForConceptId(asset.conceptId, asset.bundle, defaultBundle),
+    ...(entry.description ? { description: entry.description } : {}),
+  });
+  const available = listAssets().flatMap((asset) => {
+    const entry =
+      asset.conceptId.startsWith(RULES_PREFIX) && adapterWrites(asset.bundle, "rule") ? ruleEntry(asset) : undefined;
+    return entry && !isProposedQuality(entry.quality) ? [described(asset, entry)] : [];
+  });
+  const name = input.project?.trim();
+  if (!name) return { available, listed: [], applies: [] };
+  const project = resolveProject(config, { project: name });
+  const listed = (project?.rules ?? []).map((ref) => {
+    const checked = checkListed(ref);
+    if ("why" in checked) return { ref, problem: checked.why };
+    const { ref: resolved, ...rest } = described(checked.asset, checked.entry);
+    return { ref, resolved, ...rest };
+  });
+  const applies = selectRules({ project: name }).found.map(({ ref, description }) => ({
+    ref,
+    ...(description ? { description } : {}),
+  }));
+  return { available, listed, applies };
 }
 
 /** One `rules` usage event per call: what was loaded, not a search or a show. */

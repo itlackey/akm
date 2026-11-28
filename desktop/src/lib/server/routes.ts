@@ -261,6 +261,7 @@ export const routes: Route[] = [
       limit: count(query, "limit"),
     }),
   ),
+  get("/api/rules/choices", (query) => assets.ruleChoices({ project: text(query, "project") })),
   get("/api/projects/overview", (query) => assets.projectOverview({ project: text(query, "project") })),
   get("/api/search/misses", (query) => assets.searchMisses({ since: text(query, "since") })),
   get("/api/asset", (query) => assets.show(refOf(query))),

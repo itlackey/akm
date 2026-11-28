@@ -6,6 +6,7 @@
 
 <script lang="ts">
   import { appHref } from "./client";
+  import ProjectRules from "./ProjectRules.svelte";
   import { onDestroy, tick } from "svelte";
   import { workspace } from "./state/workspace.svelte";
   import {
@@ -232,6 +233,8 @@
       `Assets with one of the values rank first. Without any, assets marked project=${draft.name.trim() || "<name>"} do.`,
       "Add preference",
     )}
+    <h2 class="group">Rules</h2>
+    <ProjectRules bind:rules={draft.rules} project={original?.name ?? ""} name={draft.name} {busy} />
     <h2 class="group">Writes</h2>
     <label class="field">
       <span class="field-label">Bundle</span>

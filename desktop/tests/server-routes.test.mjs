@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -222,4 +223,30 @@ test("an index written by a newer akm tells the user to update Desktop, not to u
   assert.deepEqual([refused.status, refused.body.code], [409, "INDEX_SCHEMA_INCOMPATIBLE"]);
   assert.match(refused.body.error, /Update AKM Desktop/);
   assert.doesNotMatch(refused.body.error, /Upgrade akm/);
+});
+
+test("the rules route lists what a project can choose, and a saved list reports what no longer resolves", async (t) => {
+  const app = await launchFixture({
+    configureFixture: async ({ root }) => {
+      await mkdir(path.join(root, "personal/rules"), { recursive: true });
+      await writeFile(
+        path.join(root, "personal/rules/shared.md"),
+        "---\ndescription: Synthetic shared\n---\nBe kind.\n",
+      );
+    },
+  });
+  t.after(() => app.stop());
+  assert.deepEqual(ok(await app.call("/api/rules/choices")), {
+    available: [{ ref: "rules/shared", description: "Synthetic shared" }],
+    listed: [],
+    applies: [],
+  });
+  ok(await app.call("/api/config/projects", { set: { listed: { rules: ["rules/shared", "rules/gone"] } } }));
+  const choices = ok(await app.call("/api/rules/choices?project=listed"));
+  assert.deepEqual(choices.listed, [
+    { ref: "rules/shared", resolved: "rules/shared", description: "Synthetic shared" },
+    { ref: "rules/gone", problem: "no enabled bundle holds it" },
+  ]);
+  assert.deepEqual(choices.applies, [{ ref: "rules/shared", description: "Synthetic shared" }]);
+  assert.equal((await app.call("/api/rules/choices?project=missing")).status, 400);
 });

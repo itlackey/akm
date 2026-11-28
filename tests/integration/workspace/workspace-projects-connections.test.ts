@@ -346,3 +346,78 @@ describe("config.saveEmbedding", () => {
     await expectUsage(() => config.saveEmbedding({ kind: "connection", model: "m" }), "MISSING_REQUIRED_ARGUMENT");
   });
 });
+
+describe("assets.ruleChoices", () => {
+  const rule = (description: string, extra = "") => `---\ndescription: ${description}\n${extra}---\nBody.\n`;
+
+  function seedRules() {
+    const stash = ctx.storage.stashDir;
+    const team = path.join(ctx.storage.root, "team");
+    const off = path.join(ctx.storage.root, "off");
+    write(stash, "rules/shared.md", rule("Shared"));
+    write(stash, "rules/acme/dev.md", rule("Acme development", "project: acme\n"));
+    write(stash, "rules/pending.md", rule("Pending", "quality: proposed\n"));
+    write(stash, "knowledge/note.md", doc());
+    write(team, "rules/review.md", rule("Team review"));
+    write(off, "rules/hidden.md", rule("Hidden"));
+    writeSandboxConfig({
+      bundles: {
+        stash: { path: stash, writable: true },
+        team: { path: team, writable: true },
+        off: { path: off, enabled: false },
+      },
+      defaultBundle: "stash",
+      defaultWriteTarget: "stash",
+      semanticSearchMode: "off",
+      projects: {
+        auto: {},
+        acme: { rules: ["team//rules/review", "rules/gone", "knowledge/note", "rules/shared"] },
+      },
+    });
+    resetConfigCache();
+  }
+
+  test("lists every loadable rule of the enabled bundles as akm rules prints its ref", async () => {
+    seedRules();
+    const { available, listed, applies } = await out(assets.ruleChoices({}));
+    expect(available).toEqual(
+      expect.arrayContaining([
+        { ref: "rules/shared", description: "Shared" },
+        { ref: "rules/acme/dev", description: "Acme development" },
+        { ref: "team//rules/review", description: "Team review" },
+      ]),
+    );
+    const names = available.map((item: Json) => item.ref);
+    expect(names).toHaveLength(3);
+    expect(names).not.toContain("rules/pending");
+    expect(names).not.toContain("off//rules/hidden");
+    expect([listed, applies]).toEqual([[], []]);
+  });
+
+  test("a project without a list applies its project: rules and the shared ones, and has nothing listed", async () => {
+    seedRules();
+    const auto = await out(assets.ruleChoices({ project: "auto" }));
+    expect(auto.listed).toEqual([]);
+    expect(auto.applies.map((item: Json) => item.ref)).toEqual(["rules/shared"]);
+  });
+
+  test("a listed project reports each ref as written, what it resolves to, and why one loads nothing", async () => {
+    seedRules();
+    const { listed, applies } = await out(assets.ruleChoices({ project: "acme" }));
+    expect(listed).toEqual([
+      { ref: "team//rules/review", resolved: "team//rules/review", description: "Team review" },
+      { ref: "rules/gone", problem: "no enabled bundle holds it" },
+      { ref: "knowledge/note", problem: expect.stringContaining("not a rule") },
+      { ref: "rules/shared", resolved: "rules/shared", description: "Shared" },
+    ]);
+    expect(applies).toEqual([
+      { ref: "team//rules/review", description: "Team review" },
+      { ref: "rules/shared", description: "Shared" },
+    ]);
+  });
+
+  test("an unknown project is refused", async () => {
+    seedRules();
+    await expectUsage(() => assets.ruleChoices({ project: "nope" }), "INVALID_FLAG_VALUE");
+  });
+});
