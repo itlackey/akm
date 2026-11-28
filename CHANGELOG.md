@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A stable release also moves npm's `next` tag of `akm-cli` and `akm-web` to it, unless `next` holds a newer line's prerelease, so `akm-cli@next` and `akm-web@next` never trail `latest`.
+
 ## [0.10.261135] - 2026-11-27
 
 ### Added

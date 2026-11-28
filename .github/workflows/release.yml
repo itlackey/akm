@@ -385,6 +385,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
+      next_follows: ${{ steps.next.outputs.next_follows }}
     # tests/release-check.sh proves the packaged artifact; the build and
     # publish steps follow it.
     timeout-minutes: 30
@@ -522,6 +523,23 @@ jobs:
             --provenance \
             --access public \
             --tag "$DIST_TAG"
+
+      # A stable at or above `next` moves `next` to it too, so the prerelease channel never trails `latest`; one from
+      # an older line leaves a newer line's prerelease on `next`. Trusted publishing authenticates `npm dist-tag` (npm
+      # 11.21.0 or later) only when the package's trusted publisher allows it ("Allow npm dist-tag" on npmjs.com); a
+      # refusal shows on the run and does not stop the release.
+      - name: Point next at the stable
+        id: next
+        if: ${{ !inputs.dry_run && env.DIST_TAG == 'latest' }}
+        continue-on-error: true
+        run: |
+          current="$(npm view akm-cli dist-tags.next 2>/dev/null || true)"
+          if [ -z "$current" ] || node -e 'process.exit(require("semver").gte(process.argv[1], process.argv[2]) ? 0 : 1)' "$CANDIDATE_VERSION" "$current"; then
+            npm dist-tag add "akm-cli@$CANDIDATE_VERSION" next
+            echo "next_follows=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "next stays on $current, above $CANDIDATE_VERSION"
+          fi
 
       - name: Create GitHub release
         if: ${{ !inputs.dry_run }}
@@ -669,3 +687,11 @@ jobs:
             exit 0
           fi
           npm publish "$STAGE" --ignore-scripts --provenance --access public --tag "$DIST_TAG"
+
+      # akm-web's `next` follows akm-cli's: moved to the stable when the release job moved akm-cli's.
+      - name: Point akm-web's next at the stable
+        if: ${{ !inputs.dry_run && needs.release.outputs.next_follows == 'true' }}
+        continue-on-error: true
+        run: |
+          npm install -g npm@latest
+          npm dist-tag add "$(node -p 'require(process.argv[1]).name' "$STAGE/package.json")@$VERSION" next
