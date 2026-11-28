@@ -1056,14 +1056,14 @@
   .map-head {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 24px;
+    gap: var(--space-1) var(--space-5);
     align-items: center;
-    padding: 0 12px;
+    padding: 0 var(--space-3);
     border-bottom: 1px solid var(--border);
   }
   .library-views {
     display: flex;
-    gap: 24px;
+    gap: var(--space-5);
     min-height: 44px;
   }
   .library-views a {
@@ -1080,12 +1080,12 @@
     font-weight: 600;
   }
   .map-page {
-    padding: 8px 12px;
+    padding: var(--space-2) var(--space-3);
   }
   .views {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: var(--space-1);
     min-inline-size: 0;
   }
   .views button[role="tab"] {
@@ -1101,14 +1101,14 @@
   }
   .map-filter {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
     font-size: var(--text-s);
     color: var(--muted);
   }
   .bundle-pick {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
     margin-inline-start: auto;
     font-size: var(--text-s);
@@ -1122,7 +1122,7 @@
     grid-template-columns: minmax(0, 1fr) 20rem;
     /* The map takes all the window has left under the app's header and the row above. */
     --stage-size: max(360px, calc(100vh - 152px));
-    gap: 8px;
+    gap: var(--space-2);
     align-items: start;
   }
   .map-body.alone {
@@ -1141,9 +1141,9 @@
      panel's button. Over the tags, which have no spare corner, the row sits above them. */
   .stage-tools {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
-    padding: 4px 44px 4px 8px;
+    padding: var(--space-1) 44px var(--space-1) var(--space-2);
   }
   .map-stage:has(:global(.stage-3d)) .stage-tools {
     position: absolute;
@@ -1155,7 +1155,7 @@
     padding: 3px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-small);
   }
   .stage-tools :global(button),
   .stage-tools input,
@@ -1165,7 +1165,7 @@
     min-block-size: 28px;
     padding-block: 0;
     font-size: var(--text-s);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
   }
   .stage-tools .views {
     display: flex;
@@ -1178,7 +1178,7 @@
   .group-by {
     flex: none;
     inline-size: 152px;
-    padding-inline-start: 8px;
+    padding-inline-start: var(--space-2);
   }
   .map-filter {
     flex: 0 1 176px;
@@ -1186,7 +1186,7 @@
   }
   .map-filter input {
     inline-size: 100%;
-    padding-inline: 8px;
+    padding-inline: var(--space-2);
   }
   /* The panel's button holds the map's top corner beside the panel, open or closed. */
   .panel-toggle {
@@ -1203,7 +1203,7 @@
     color: var(--muted);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .panel-toggle[aria-expanded="true"] {
@@ -1235,7 +1235,7 @@
     gap: 6px;
     align-items: center;
     margin: 0;
-    padding-inline: 10px 8px;
+    padding-inline: 10px var(--space-2);
     border: 1px solid var(--border-strong);
     background: var(--surface);
     cursor: pointer;
@@ -1262,18 +1262,18 @@
     display: grid;
     margin: 0;
     min-inline-size: 15rem;
-    padding: 4px;
+    padding: var(--space-1);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--radius-small);
     background: var(--surface);
     box-shadow: var(--shadow-float);
   }
   .show-menu label {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
     block-size: 28px;
-    padding: 0 8px;
+    padding: 0 var(--space-2);
     white-space: nowrap;
     cursor: pointer;
   }
@@ -1286,15 +1286,15 @@
   }
   .show-menu .count {
     margin-inline-start: auto;
-    padding-inline-start: 16px;
+    padding-inline-start: var(--space-4);
     font-size: var(--text-xs);
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
   .show-menu button {
     justify-self: stretch;
-    margin-block-start: 4px;
-    padding-inline: 8px;
+    margin-block-start: var(--space-1);
+    padding-inline: var(--space-2);
     text-align: start;
     border-block-start: 1px solid var(--border);
     border-radius: 0;
@@ -1347,18 +1347,18 @@
   }
   .actions {
     display: flex;
-    gap: 8px;
-    margin-block-end: 12px;
+    gap: var(--space-2);
+    margin-block-end: var(--space-3);
   }
   .map-side section > h3 {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .levels {
     padding: 6px 10px;
   }
   .levels p {
-    margin: 0 0 4px;
+    margin: 0 0 var(--space-1);
   }
   .levels ul {
     display: grid;
@@ -1369,7 +1369,7 @@
   }
   .levels li {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
     font-size: var(--text-xs);
   }
@@ -1405,7 +1405,7 @@
     border-top: 1px solid var(--border);
   }
   .map-side p {
-    margin: 0 0 4px;
+    margin: 0 0 var(--space-1);
   }
   .side-head {
     display: flex;
@@ -1439,7 +1439,7 @@
     color: var(--muted);
     background: none;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .icon-btn:hover {
@@ -1465,7 +1465,7 @@
   .figures {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 4px 12px;
+    gap: var(--space-1) var(--space-3);
     margin: 0;
     font-size: var(--text-s);
   }
@@ -1485,7 +1485,7 @@
   }
   .rows li {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: baseline;
     font-size: var(--text-s);
     padding: 2px 0;
@@ -1502,12 +1502,12 @@
   .pairs li {
     display: grid;
     gap: 2px;
-    padding: 4px 0;
+    padding: var(--space-1) 0;
     font-size: var(--text-s);
   }
   .pair-foot {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: baseline;
     font-size: var(--text-xs);
   }
@@ -1516,7 +1516,7 @@
     font-size: var(--text-s);
   }
   .more {
-    margin: 4px 0 0;
+    margin: var(--space-1) 0 0;
     font-size: var(--text-xs);
     color: var(--muted);
   }
@@ -1548,7 +1548,7 @@
   .actions :global(.btn),
   .actions button {
     min-block-size: 28px;
-    padding: 2px 12px;
+    padding: 2px var(--space-3);
     font-size: var(--text-s);
   }
   .actions a {
@@ -1560,12 +1560,12 @@
   .wrong {
     display: grid;
     gap: 6px;
-    margin: 0 0 12px;
-    padding: 8px 10px;
+    margin: 0 0 var(--space-3);
+    padding: var(--space-2) 10px;
     list-style: none;
     font-size: var(--text-s);
     background: var(--warn-bg);
-    border-radius: 6px;
+    border-radius: var(--radius-small);
   }
   /* A long name inside a sentence wraps with it, instead of running out of the box on one line. */
   .wrong button.link,
@@ -1575,13 +1575,13 @@
     overflow-wrap: anywhere;
   }
   .near {
-    margin: 4px 0 6px 12px;
-    padding-inline-start: 8px;
+    margin: var(--space-1) 0 6px var(--space-3);
+    padding-inline-start: var(--space-2);
     border-inline-start: 2px solid var(--accent);
   }
   .near li {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: baseline;
     font-size: var(--text-xs);
   }

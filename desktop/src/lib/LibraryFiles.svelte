@@ -771,7 +771,7 @@
     min-height: 0;
     background: var(--surface-2);
     border-right: 1px solid var(--border);
-    padding: 0 8px;
+    padding: 0 var(--space-2);
   }
   .tree-scroll {
     position: relative;
@@ -779,7 +779,7 @@
     flex: 1;
     overflow: auto;
     scrollbar-gutter: stable;
-    padding-block: 4px;
+    padding-block: var(--space-1);
   }
   .tree-heading {
     display: flex;
@@ -787,19 +787,19 @@
     justify-content: space-between;
     flex: none;
     min-height: 56px;
-    padding: 8px 10px;
-    font-size: 12px;
+    padding: var(--space-2) 10px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     color: var(--muted);
   }
   .hidden-files {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex: none;
     margin: 0;
     padding: 14px 10px;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
     border-top: 1px solid var(--border);
   }
@@ -821,9 +821,9 @@
   .files-location {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
     flex-wrap: wrap;
-    padding: 8px 24px;
+    padding: var(--space-2) var(--space-5);
     min-height: 56px;
     border-bottom: 1px solid var(--border);
   }
@@ -834,7 +834,7 @@
     flex-wrap: wrap;
     flex: 1;
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .file-breadcrumbs button {
     border: 0;
@@ -842,7 +842,7 @@
     color: var(--muted);
     padding: 3px 2px;
     min-height: 28px;
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 400;
   }
   .file-breadcrumbs [aria-current] {
@@ -851,7 +851,7 @@
     overflow-wrap: anywhere;
   }
   .folder-content {
-    padding: 24px 28px;
+    padding: var(--space-5) 28px;
     margin: 0;
   }
   .folder-heading {
@@ -859,27 +859,27 @@
     align-items: center;
     justify-content: space-between;
     gap: 20px;
-    margin-bottom: 24px;
+    margin-bottom: var(--space-5);
   }
   .folder-heading h1 {
-    font-size: 22px;
+    font-size: var(--text-xl);
     margin: 0;
   }
   .folder-heading p {
-    margin: 4px 0 0;
+    margin: var(--space-1) 0 0;
   }
   .folder-tools {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
   }
   /* The filter's name is shown: before the field, and above it where the tools stack on a phone. */
   .folder-filter {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--text-xs);
     white-space: nowrap;
   }
   .folder-heading input {
@@ -887,7 +887,7 @@
     max-width: 200px;
     min-width: 0;
     height: var(--control-height, 40px);
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .folder-table {
     width: 100%;
@@ -916,8 +916,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 12px;
-    margin-bottom: 16px;
+    gap: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-4);
   }
   .folder-new p {
     flex-basis: 100%;
@@ -927,43 +927,43 @@
     display: flex;
     flex-wrap: wrap;
     align-items: end;
-    gap: 8px 12px;
-    margin-bottom: 16px;
+    gap: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-4);
   }
   .create-form label {
     display: grid;
-    gap: 4px;
-    font-size: 13px;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
     font-weight: 550;
   }
   .bundle-git {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 12px;
-    padding: 8px 24px;
-    font-size: 13px;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-5);
+    font-size: var(--text-xs);
     border-bottom: 1px solid var(--border);
   }
   .files-failure {
-    margin: 8px 24px 0;
+    margin: var(--space-2) var(--space-5) 0;
   }
   .row-rename {
     flex: 1;
     min-width: 0;
     height: 32px;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .folder-table th {
-    font-size: 12px;
-    padding: 10px 12px;
+    font-size: var(--text-2xs);
+    padding: 10px var(--space-3);
     background: none;
     color: var(--muted);
   }
   .folder-table td {
     position: relative;
-    font-size: 12px;
-    padding: 2px 12px;
+    font-size: var(--text-2xs);
+    padding: 2px var(--space-3);
     vertical-align: middle;
     border-bottom-color: var(--border);
   }
@@ -991,7 +991,7 @@
     border: 0;
     background: none;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 500;
     text-align: left;
     overflow-wrap: anywhere;
@@ -1009,11 +1009,11 @@
   .quiet {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
+    gap: var(--space-2);
+    padding: 6px var(--space-2);
     border: 0;
     background: none;
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 500;
     color: var(--text);
     white-space: nowrap;
@@ -1025,7 +1025,7 @@
     .folder-tools {
       flex-direction: column;
       align-items: end;
-      gap: 4px;
+      gap: var(--space-1);
     }
   }
   @media (max-width: 850px) {
@@ -1051,7 +1051,7 @@
       display: inline-flex;
     }
     .files-location {
-      padding: 8px 16px;
+      padding: var(--space-2) var(--space-4);
     }
     .file-breadcrumbs button {
       min-height: var(--control-height, 44px);
@@ -1061,11 +1061,11 @@
       flex-basis: 60%;
     }
     .folder-content {
-      padding: 24px 20px;
+      padding: var(--space-5) 20px;
     }
     .folder-heading {
       flex-wrap: wrap;
-      gap: 16px;
+      gap: var(--space-4);
     }
     .folder-tools {
       width: 100%;
@@ -1077,7 +1077,7 @@
     }
     .folder-filter {
       display: grid;
-      gap: 4px;
+      gap: var(--space-1);
     }
     .folder-heading input {
       max-width: none;

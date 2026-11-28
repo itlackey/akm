@@ -323,7 +323,7 @@
   .chip {
     display: inline-block;
     margin: 0 var(--space-1) var(--space-1) 0;
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
     border-radius: var(--radius-pill);
     background: var(--surface-2);
     font-size: var(--text-s);

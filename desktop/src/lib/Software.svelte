@@ -384,48 +384,48 @@
   .software {
     max-width: 1000px;
     margin-inline: auto;
-    padding: 0 8px;
+    padding: 0 var(--space-2);
   }
   .intro {
-    margin: 32px 0;
+    margin: var(--space-6) 0;
   }
   .intro h2 {
     margin: 0;
-    font-size: 24px;
+    font-size: var(--text-heading);
   }
   .intro p {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
   }
   section {
-    padding: 32px 0;
+    padding: var(--space-6) 0;
     margin: 0;
     border-top: 1px solid var(--border);
   }
   h3,
   h4 {
     margin: 0;
-    font-size: 16px;
+    font-size: var(--text-base);
     text-transform: none;
     letter-spacing: 0;
   }
   h3 {
-    font-size: 18px;
+    font-size: var(--text-l);
   }
   h3 span,
   h4 span {
     font-weight: 400;
-    margin-left: 8px;
+    margin-left: var(--space-2);
   }
   .software-row,
   .plugin-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
+    gap: var(--space-5);
   }
   .software-row p,
   .plugin-row p {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
   }
   .software-row {
     margin-bottom: 20px;
@@ -437,10 +437,10 @@
     min-height: var(--control-height);
   }
   .menu-install {
-    margin: 24px 0 32px;
+    margin: var(--space-5) 0 var(--space-6);
   }
   .menu-install .software-row {
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
   }
   .menu-install button {
     flex-shrink: 0;
@@ -455,7 +455,7 @@
   dl {
     display: grid;
     grid-template-columns: 120px minmax(0, 1fr);
-    gap: 12px;
+    gap: var(--space-3);
   }
   dt {
     color: var(--muted);
@@ -465,10 +465,10 @@
     overflow-wrap: anywhere;
   }
   .plugin-heading {
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
   }
   .plugin-heading p {
-    margin: 8px 0;
+    margin: var(--space-2) 0;
   }
   .channel-choice {
     max-width: 320px;
@@ -496,7 +496,7 @@
   }
   .field-hint {
     max-width: 75ch;
-    margin-top: 12px;
+    margin-top: var(--space-3);
   }
   /* The "Saved" line is a live region that must stay in the page; empty, it takes no room. */
   .saved:empty {
@@ -507,7 +507,7 @@
     .plugin-row {
       align-items: flex-start;
       flex-wrap: wrap;
-      gap: 16px;
+      gap: var(--space-4);
     }
     .software-row > .btn-row {
       width: 100%;

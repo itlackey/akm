@@ -182,19 +182,19 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
+    gap: var(--space-5);
     flex-wrap: wrap;
-    margin-bottom: 24px;
+    margin-bottom: var(--space-5);
   }
   .file-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
   /* The page's heading, with the line height and spacing it had as a second-level heading. */
   .sensitive-reader h1 {
     margin: 0;
-    font-size: 24px;
+    font-size: var(--text-heading);
     line-height: inherit;
     letter-spacing: var(--tracking-snug);
   }
@@ -202,16 +202,16 @@
     margin: 10px 0 0;
   }
   .masked {
-    padding: 24px;
+    padding: var(--space-5);
     background: var(--surface-subtle, var(--bg));
-    border-radius: 8px;
-    font-size: 24px;
+    border-radius: var(--radius);
+    font-size: var(--text-heading);
     letter-spacing: 4px;
   }
   .secret-content {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    padding: 24px;
+    padding: var(--space-5);
     line-height: 1.6;
   }
 </style>

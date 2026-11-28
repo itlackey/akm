@@ -205,14 +205,14 @@
     gap: 6px;
     width: 100%;
     min-height: 34px;
-    padding: 5px 8px;
+    padding: 5px var(--space-2);
     border: 0;
     background: none;
     color: var(--text);
     text-align: left;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     font-weight: 400;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
   }
   [role="treeitem"]:hover {
     background: var(--surface);
@@ -226,7 +226,7 @@
     outline-offset: -2px;
   }
   [role="treeitem"]:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: var(--focus-ring-accent);
     outline-offset: -2px;
   }
   .tree-rename {
@@ -234,12 +234,12 @@
     align-items: center;
     gap: 6px;
     min-height: 34px;
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
   }
   .tree-rename input {
     flex: 1;
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     height: 30px;
   }
   .node-name {
@@ -268,7 +268,7 @@
   @media (max-width: 850px) {
     [role="treeitem"] {
       min-height: 44px;
-      font-size: 14px;
+      font-size: var(--text-s);
     }
     .tree-rename {
       min-height: 44px;

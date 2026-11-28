@@ -672,6 +672,59 @@ test("different internal and public hosts: the public origin is what the framewo
   assert.equal((await app.request("/api/session", { host: "akm-internal", headers: app.bearer })).status, 200);
 });
 
+test("token overrides: theme.css sets them after the UI's own, behind the same checks, with the policy unchanged", {
+  timeout: 120000,
+}, async (t) => {
+  const tokens = { "--accent": "#0a7f5a", "--font": '"Noto Serif", Georgia, serif', "--radius": "0px" };
+  const app = await start(t, { web: { tokens } });
+  const plain = await start(t);
+
+  // Served only to a request that gets in, from the origin's host, as a style sheet that sets only those properties.
+  const sheet = await app.request("/theme.css", { headers: app.bearer });
+  assert.equal(sheet.status, 200);
+  assert.equal(sheet.headers["content-type"], "text/css; charset=utf-8");
+  assert.equal(sheet.headers["x-content-type-options"], "nosniff");
+  assert.equal(sheet.headers["cache-control"], "no-store");
+  assert.equal(
+    sheet.text,
+    ':root {\n  --accent: #0a7f5a;\n  --font: "Noto Serif", Georgia, serif;\n  --radius: 0px;\n}\n',
+  );
+  assert.equal((await app.request("/theme.css")).status, 401, "no secret, no sheet");
+  assert.equal((await app.request("/theme.css", { headers: { Authorization: "Bearer wrong" } })).status, 401);
+  assert.equal((await app.request("/theme.css", { host: "evil.example", headers: app.bearer })).status, 403);
+  // Without tokens the sheet is empty, and AKM Desktop's own launch reads none of experimental.web.
+  assert.equal((await plain.request("/theme.css", { headers: plain.bearer })).text, "");
+  const native = await start(t, { web: { tokens }, env: { AKM_DESKTOP_NATIVE: "1" } });
+  assert.equal((await native.request("/theme.css", { headers: native.bearer })).text, "");
+
+  // The page's policy is the same with and without tokens: the sheet is 'self', so nothing is added to allow it.
+  const policy = async (server) =>
+    (await server.request("/", { headers: { ...server.bearer, Accept: "text/html" } })).headers[
+      "content-security-policy"
+    ].replace(/'nonce-[^']+'/g, "'nonce'");
+  assert.equal(await policy(app), await policy(plain));
+  assert.match(await policy(app), /frame-ancestors 'none'/);
+
+  // In the browser the override wins over the UI's tokens, and what they draw follows.
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setExtraHTTPHeaders(app.bearer);
+  await page.goto(`${app.origin}/settings/config`);
+  await expect(page.locator(".desktop-topbar")).toBeVisible();
+  const drawn = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.borderRadius = "var(--radius)";
+    document.body.append(probe);
+    return {
+      accent: getComputedStyle(document.documentElement).accentColor,
+      font: getComputedStyle(document.body).fontFamily,
+      radius: getComputedStyle(probe).borderTopLeftRadius,
+    };
+  });
+  assert.deepEqual(drawn, { accent: "rgb(10, 127, 90)", font: '"Noto Serif", Georgia, serif', radius: "0px" });
+});
+
 test("framing: denied by default; allowed for exactly the configured parents", async (t) => {
   const plain = await start(t);
   const denied = await plain.request("/", { headers: { ...plain.bearer, Accept: "text/html" } });

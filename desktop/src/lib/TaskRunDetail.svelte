@@ -90,13 +90,13 @@
 <style>
   .run {
     border-block-start: 1px solid var(--border);
-    padding-block: 0.75rem;
+    padding-block: var(--space-3);
   }
   header {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem 0.75rem;
+    gap: var(--space-2) var(--space-3);
   }
   h4 {
     margin: 0;
@@ -104,8 +104,8 @@
   dl {
     display: grid;
     grid-template-columns: max-content 1fr;
-    gap: 0.25rem 1rem;
-    margin-block: 0.5rem;
+    gap: var(--space-1) var(--space-4);
+    margin-block: var(--space-2);
   }
   dt {
     color: var(--muted);

@@ -953,9 +953,9 @@
   }
   .library-views {
     display: flex;
-    gap: 24px;
+    gap: var(--space-5);
     flex: none;
-    padding: 0 24px;
+    padding: 0 var(--space-5);
     border-bottom: 1px solid var(--border);
     min-height: 44px;
     align-items: stretch;
@@ -965,7 +965,7 @@
     :global(.desktop-shell:not(.workspace-active)) .library-views {
       max-width: 1040px;
       margin-inline: auto;
-      padding-inline: 48px;
+      padding-inline: var(--space-7);
     }
   }
   .library-views a {
@@ -975,7 +975,7 @@
     border-bottom: 2px solid transparent;
     color: var(--muted);
     text-decoration: none;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .library-views a[aria-current] {
     color: var(--accent);
@@ -985,19 +985,19 @@
   .search-page {
     max-width: 1040px;
     width: 100%;
-    padding: 36px 48px 60px;
+    padding: 36px var(--space-7) 60px;
     margin: 0 auto;
     overflow: auto;
     min-height: 0;
   }
   .search-page h1 {
-    font-size: 28px;
-    margin: 0 0 24px;
+    font-size: var(--text-title);
+    margin: 0 0 var(--space-5);
   }
   .search-form {
     display: flex;
     align-items: stretch;
-    gap: 8px;
+    gap: var(--space-2);
     position: relative;
     max-width: 800px;
     margin: 0;
@@ -1005,12 +1005,12 @@
   .search-form > input {
     flex: 1;
     min-width: 0;
-    font-size: 16px;
+    font-size: var(--text-base);
     min-height: 44px;
   }
   .search-form > button {
     min-height: 44px;
-    padding-inline: 24px;
+    padding-inline: var(--space-5);
   }
   .search-filters {
     position: relative;
@@ -1023,11 +1023,11 @@
     min-height: 44px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border: 0;
     background: none;
-    font-size: 13px;
+    font-size: var(--text-xs);
     white-space: nowrap;
     cursor: pointer;
     list-style: none;
@@ -1041,16 +1041,16 @@
     top: calc(100% + 8px);
     right: 0;
     width: min(680px, calc(100vw - 64px));
-    padding: 24px;
+    padding: var(--space-5);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-panel);
   }
   /* Eight fields in two rows, so the panel's footer stays on screen in a short window. */
   .library-filters {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 16px;
+    gap: var(--space-4);
   }
   .library-filters :is(select, input) {
     inline-size: 100%;
@@ -1058,7 +1058,7 @@
   }
   .filter-footer {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     margin-top: 20px;
     align-items: center;
     flex-wrap: wrap;
@@ -1070,7 +1070,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     max-width: 800px;
     margin: 18px 0 26px;
   }
@@ -1078,15 +1078,15 @@
     display: flex;
     align-items: center;
     gap: 20px;
-    font-size: 12px;
+    font-size: var(--text-2xs);
   }
   .quiet {
     background: none;
     border: 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-2xs);
     min-height: var(--control-height, 36px);
-    padding: 4px 0;
+    padding: var(--space-1) 0;
     font-weight: 400;
   }
   .search-results {
@@ -1097,7 +1097,7 @@
   }
   .search-result {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     margin: 0 0 20px;
     padding: 0 0 18px;
     border-bottom: 1px solid var(--border);
@@ -1114,7 +1114,7 @@
     min-width: 0;
   }
   .search-result h2 {
-    font-size: 21px;
+    font-size: var(--text-result);
     font-weight: 600;
     line-height: 1.4;
     margin: 0;
@@ -1127,13 +1127,13 @@
     text-decoration: underline;
   }
   .search-result p {
-    font-size: 14px;
+    font-size: var(--text-s);
     line-height: 1.7;
     margin: 5px 0 0;
     max-width: 72ch;
   }
   .result-context {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
     margin-top: 6px;
   }
@@ -1167,62 +1167,62 @@
     justify-content: space-between;
     align-items: center;
     gap: 20px;
-    margin-bottom: 24px;
+    margin-bottom: var(--space-5);
   }
   .comparison-header h1 {
     margin: 0;
     font-size: 25px;
   }
   .comparison-header p {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
   }
   .comparison-header > a {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     white-space: nowrap;
   }
   .comparison-identities {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 24px;
+    gap: var(--space-5);
     padding: 20px 0;
-    margin: 0 0 24px;
+    margin: 0 0 var(--space-5);
     border-block: 1px solid var(--border);
   }
   .comparison-identities strong {
     display: block;
     overflow-wrap: anywhere;
-    font-size: 17px;
+    font-size: var(--text-subtitle);
     margin: 6px 0;
   }
   .comparison-side {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
   }
   .comparison-identities a {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .comparison-selection {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
     flex: none;
     background: var(--surface-2);
-    padding: 12px 24px;
+    padding: var(--space-3) var(--space-5);
     border-bottom: 1px solid var(--border);
   }
   .comparison-selection > div {
     flex: 1;
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .comparison-selection span {
     display: block;
-    font-size: 11px;
+    font-size: var(--text-3xs);
     color: var(--muted);
     overflow-wrap: anywhere;
   }
@@ -1236,9 +1236,9 @@
   .files-actions {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--space-4);
     margin-left: auto;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .asset-choices {
     padding-left: 20px;
@@ -1250,32 +1250,32 @@
   .library-gaps {
     max-width: 1040px;
     margin-inline: auto;
-    padding: 28px 48px;
+    padding: 28px var(--space-7);
     overflow: auto;
     min-height: 0;
   }
   .write-receipt {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex: none;
     margin: 0;
-    padding: 12px 24px;
-    font-size: 13px;
+    padding: var(--space-3) var(--space-5);
+    font-size: var(--text-xs);
     color: var(--ok);
   }
   .list-empty {
-    padding: 32px 0;
+    padding: var(--space-6) 0;
   }
   .list-empty h2 {
-    font-size: 20px;
+    font-size: var(--text-lead);
   }
   @media (max-width: 850px) {
     .library-views {
       padding: 0 20px;
     }
     .search-page {
-      padding: 28px 24px;
+      padding: 28px var(--space-5);
     }
     .search-form {
       flex-wrap: wrap;
@@ -1285,7 +1285,7 @@
       max-width: none;
     }
     .search-form > button {
-      padding-inline: 16px;
+      padding-inline: var(--space-4);
     }
     .search-filters {
       position: static;
@@ -1300,15 +1300,15 @@
       left: 0;
       right: 0;
       width: auto;
-      padding: 16px;
+      padding: var(--space-4);
     }
     .library-filters {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .search-summary {
       align-items: start;
-      gap: 8px;
-      margin-top: 8px;
+      gap: var(--space-2);
+      margin-top: var(--space-2);
     }
     .search-summary > div {
       gap: 14px;
@@ -1316,14 +1316,14 @@
       justify-content: end;
     }
     .reading-inspector {
-      padding: 20px 24px 40px;
+      padding: 20px var(--space-5) 40px;
     }
     .files-inspector {
-      padding: 24px 20px;
+      padding: var(--space-5) 20px;
     }
     .comparison-selection {
       flex-wrap: wrap;
-      padding: 12px 16px;
+      padding: var(--space-3) var(--space-4);
     }
     .comparison-selection > div {
       flex-basis: 100%;
@@ -1332,7 +1332,7 @@
       grid-template-columns: 1fr;
     }
     .files-actions {
-      font-size: 12px;
+      font-size: var(--text-2xs);
     }
     .library-filters {
       grid-template-columns: 1fr 1fr;

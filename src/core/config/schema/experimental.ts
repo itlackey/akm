@@ -45,6 +45,26 @@ const allowedHost = z
   })
   .refine((value) => Number(/:(\d+)$/.exec(value)?.[1] ?? 0) <= 65535, { message: "port must be at most 65535" });
 
+/**
+ * A `tokens` entry: a CSS custom property of AKM Desktop's UI (`--accent`) and its value. The value may not end the
+ * declaration or the rule it is written into (no `;`, `{`, `}`, backslash, line break, comment or unbalanced quote),
+ * so an entry can only ever set that one property.
+ */
+const uiTokenName = z
+  .string()
+  .regex(/^--[A-Za-z0-9-]+$/, { message: "must be a CSS custom property name such as --accent" });
+const uiTokenValue = z
+  .string()
+  .max(500)
+  .refine(
+    (value) =>
+      /\S/.test(value) &&
+      !/[;{}\\\r\n]|\/\*/.test(value) &&
+      (value.match(/"/g)?.length ?? 0) % 2 === 0 &&
+      (value.match(/'/g)?.length ?? 0) % 2 === 0,
+    { message: "must be one non-empty CSS value: no ;, {, }, backslash, line break, comment or unbalanced quote" },
+  );
+
 export const ExperimentalConfigSchema = z
   .object({
     /**
@@ -102,6 +122,7 @@ export const ExperimentalConfigSchema = z
           .optional(),
         allowedHosts: z.array(allowedHost).optional(),
         frameParents: z.array(frameParent).optional(),
+        tokens: z.record(uiTokenName, uiTokenValue).optional(),
       })
       .passthrough()
       .optional(),

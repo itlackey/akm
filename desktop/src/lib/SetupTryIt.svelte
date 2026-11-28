@@ -143,17 +143,17 @@
 
 <style>
   .hits {
-    margin: 16px 0;
+    margin: var(--space-4) 0;
     padding-inline-start: 20px;
     display: grid;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .prompt {
     display: grid;
     grid-template-columns: 110px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 12px;
-    margin: 12px 0;
+    gap: var(--space-3);
+    margin: var(--space-3) 0;
   }
   .prompt code {
     overflow-wrap: anywhere;

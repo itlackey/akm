@@ -127,7 +127,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem 0.75rem;
+    gap: var(--space-2) var(--space-3);
   }
   .run-head h2 {
     margin: 0;
@@ -135,8 +135,8 @@
   .run-facts {
     display: grid;
     grid-template-columns: max-content 1fr;
-    gap: 0.25rem 1rem;
-    margin-block: 0.75rem;
+    gap: var(--space-1) var(--space-4);
+    margin-block: var(--space-3);
   }
   .run-facts dt {
     color: var(--muted);
@@ -146,8 +146,8 @@
     overflow-wrap: anywhere;
   }
   h3 {
-    margin: 1.25rem 0 0.5rem;
-    font-size: 1rem;
+    margin: 1.25rem 0 var(--space-2);
+    font-size: var(--text-base);
   }
   .split {
     display: flex;

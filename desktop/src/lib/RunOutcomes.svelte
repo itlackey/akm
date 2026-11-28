@@ -54,26 +54,26 @@
 
 <style>
   .outcomes {
-    margin-block: 1rem 2rem;
-    padding-bottom: 1rem;
+    margin-block: var(--space-4) var(--space-6);
+    padding-bottom: var(--space-4);
     border-bottom: 1px solid var(--border);
   }
   .outcomes h2 {
-    font-size: 1.125rem;
-    margin: 0 0 0.75rem;
+    font-size: var(--text-l);
+    margin: 0 0 var(--space-3);
   }
   .outcome-list {
     list-style: none;
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 0.75rem;
+    gap: var(--space-3);
   }
   .outcome-list li {
     display: grid;
     grid-template-columns: 8rem minmax(8rem, 1fr) minmax(10rem, max-content);
     align-items: center;
-    gap: 0.25rem 1rem;
+    gap: var(--space-1) var(--space-4);
   }
   .outcome-name {
     font-weight: 600;
@@ -115,16 +115,16 @@
   .outcome-failed {
     display: flex;
     flex-wrap: wrap;
-    gap: 0 1rem;
+    gap: 0 var(--space-4);
   }
   .outcome-key {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.25rem 1.25rem;
+    gap: var(--space-1) 1.25rem;
     list-style: none;
-    margin: 0.75rem 0 0;
+    margin: var(--space-3) 0 0;
     padding: 0;
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .outcome-key li {

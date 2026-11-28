@@ -307,34 +307,34 @@
 <style>
   .build-label {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
     flex-wrap: wrap;
   }
   .build-commit {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--text-3xs);
     color: var(--faint);
-    padding-left: 8px;
+    padding-left: var(--space-2);
     border-left: 1px solid var(--border);
   }
   .leave-editor-dialog {
     max-width: 460px;
     width: calc(100vw - 32px);
-    padding: 24px;
+    padding: var(--space-5);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface);
     color: var(--text);
   }
   .leave-editor-dialog::backdrop {
-    background: rgb(0 0 0 / 0.4);
+    background: var(--scrim);
   }
   .leave-editor-dialog h2 {
-    margin: 0 0 12px;
+    margin: 0 0 var(--space-3);
   }
   .leave-editor-dialog p {
-    margin: 0 0 24px;
+    margin: 0 0 var(--space-5);
     line-height: 1.6;
   }
   .leave-editor-dialog .btn-row {

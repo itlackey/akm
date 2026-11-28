@@ -32,17 +32,17 @@
 
 <style>
   .properties {
-    margin: 0 0 16px;
-    padding: 12px 16px;
+    margin: 0 0 var(--space-4);
+    padding: var(--space-3) var(--space-4);
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .properties dl {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
-    gap: 4px 16px;
+    gap: var(--space-1) var(--space-4);
     margin: 0;
   }
   .properties dt {
@@ -54,6 +54,6 @@
     overflow-wrap: anywhere;
   }
   .properties-note {
-    margin: 0 0 12px;
+    margin: 0 0 var(--space-3);
   }
 </style>

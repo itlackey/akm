@@ -141,6 +141,7 @@ export function webSettings(options: { resolveSecret?: boolean } = {}): {
   origin?: string;
   allowedHosts: string[];
   frameParents: string[];
+  tokens?: Record<string, string>;
   secret?: string;
 } {
   const web = loadConfig().experimental?.web;
@@ -159,6 +160,7 @@ export function webSettings(options: { resolveSecret?: boolean } = {}): {
     ...(web?.origin !== undefined ? { origin: web.origin } : {}),
     allowedHosts: web?.allowedHosts ?? [],
     frameParents: web?.frameParents ?? [],
+    ...(web?.tokens !== undefined ? { tokens: web.tokens } : {}),
     ...(secret !== undefined ? { secret } : {}),
   };
 }

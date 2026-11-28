@@ -241,7 +241,7 @@
     flex: 1 1 auto;
   }
   .chip {
-    padding: 4px 12px;
+    padding: var(--space-1) var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-pill);
     background: var(--surface);
@@ -278,7 +278,7 @@
   }
   .search-result {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     margin: 0 0 20px;
     padding: 0 0 18px;
     border-bottom: 1px solid var(--border);
@@ -290,7 +290,7 @@
     min-width: 0;
   }
   .search-result h2 {
-    font-size: 21px;
+    font-size: var(--text-result);
     font-weight: 600;
     line-height: 1.4;
     margin: 0;
@@ -303,13 +303,13 @@
     text-decoration: underline;
   }
   .search-result p {
-    font-size: 14px;
+    font-size: var(--text-s);
     line-height: 1.7;
     margin: 5px 0 0;
     max-width: 72ch;
   }
   .result-context {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
     margin-top: 6px;
   }

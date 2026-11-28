@@ -1,32 +1,5 @@
 /* Desktop-specific layout; the AKM design tokens and proven components remain the base. */
 @layer desktop {
-  :root {
-    --content-max: 100rem;
-    --top-inset: 4rem;
-    --bottom-inset: 0px;
-    --control-height: 2.5rem;
-    --workspace-height: calc(100dvh - 158px);
-    --radius: 8px;
-    --radius-small: 6px;
-    --bg: light-dark(#f7f7fa, #15151a);
-    --surface: light-dark(#ffffff, #1c1c23);
-    --surface-2: light-dark(#f0f0f5, #25252e);
-    --surface-sunk: light-dark(#e9e9f0, #191920);
-    --border: light-dark(#e2e2ea, #363640);
-    --border-strong: light-dark(#81818f, #858594);
-    --rule: var(--border);
-    --text: light-dark(#23232e, #ececf2);
-    --muted: light-dark(#5c5c6d, #b8b8c7);
-    --faint: light-dark(#696979, #aaaaba);
-    --accent: light-dark(#6741c4, #b59aee);
-    --accent-hover: light-dark(#5432a5, #ccb8fa);
-    --accent-bg: light-dark(#eeebf8, #332b47);
-    --link: light-dark(#5936ad, #c9b4f6);
-    --on-accent: light-dark(#ffffff, #20182d);
-    --text-s: 0.875rem;
-    --text-xs: 0.8125rem;
-    --shadow-float: 0 8px 28px rgb(24 24 40 / 0.12);
-  }
   /* Chrome uses a native app face. Monospace belongs to source, paths and IDs,
      not field labels, navigation, or ordinary metadata. */
   .desktop-shell :is(h4, .field-label, .tile-label, thead th) {
@@ -44,7 +17,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .desktop-shell .btn-secondary {
     border-color: var(--border);
@@ -80,11 +53,11 @@
   .desktop-shell .icon-label {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .desktop-shell .badge {
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     padding: 2px 6px;
     background: var(--surface-2);
     font-weight: 500;
@@ -92,7 +65,7 @@
   .desktop-shell .nav-count {
     background: var(--surface-2);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-2xs);
   }
   /* A disclosure is supporting information, not another boxed card. */
   .desktop-shell details:not(.add-card, .notice) {
@@ -103,7 +76,7 @@
   .desktop-shell details:not(.add-card, .notice) > summary {
     border: 0;
     border-radius: var(--radius-small);
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     color: var(--muted);
   }
   .desktop-shell details:not(.add-card, .notice) > summary:hover {
@@ -121,7 +94,7 @@
   .desktop-shell .notice {
     border: 0;
     border-radius: var(--radius);
-    padding: 16px 20px;
+    padding: var(--space-4) 20px;
   }
   .desktop-shell .card {
     border: 0;
@@ -159,7 +132,7 @@
     max-inline-size: 100%;
   }
   .desktop-shell h1 {
-    font-size: 1.75rem;
+    font-size: var(--text-title);
     line-height: 1.25;
     margin: 0;
     letter-spacing: -0.02em;
@@ -194,7 +167,7 @@
     text-decoration: none;
     font-weight: 550;
     min-block-size: 40px;
-    padding: 8px 16px;
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-small);
   }
   .desktop-topbar nav > a:hover {
@@ -231,7 +204,7 @@
     gap: var(--space-4);
     padding: 8px var(--space-6);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-2xs);
   }
   .theme-picker {
     display: flex;
@@ -239,7 +212,7 @@
     gap: var(--space-3);
   }
   .theme-picker select {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     min-block-size: 32px;
     border-color: transparent;
     background-color: transparent;
@@ -253,7 +226,7 @@
     max-inline-size: min(32rem, calc(100vw - 2rem));
   }
   dialog::backdrop {
-    background: rgb(0 0 0 / 0.55);
+    background: var(--backdrop);
   }
   .page-heading {
     display: flex;
@@ -286,25 +259,25 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 16px;
-    margin-block: 16px;
+    gap: var(--space-2) var(--space-4);
+    margin-block: var(--space-4);
   }
   .section-links a {
-    padding-block: 8px;
+    padding-block: var(--space-2);
   }
   .trend-disclosure,
   .optional-settings {
-    margin-block: 16px;
+    margin-block: var(--space-4);
   }
   .trend-disclosure > summary,
   .optional-settings > summary {
-    padding: 12px 0;
+    padding: var(--space-3) 0;
     background: transparent;
     border: 0;
   }
   .trend-disclosure[open] > summary,
   .optional-settings[open] > summary {
-    margin-bottom: 16px;
+    margin-bottom: var(--space-4);
   }
   .chart-grid,
   .impact-sections,
@@ -391,7 +364,7 @@
       display: none;
     }
     .desktop-topbar nav > a {
-      padding: 8px 12px;
+      padding: var(--space-2) var(--space-3);
     }
     .footer-host {
       display: inline;
@@ -399,11 +372,6 @@
   }
   /* Phones: the bar is the six tabs in one row; the brand and the host leave it (the footer names the host). */
   @media (width < 48rem) {
-    :root {
-      --top-inset: 3.5rem;
-      --workspace-height: calc(100dvh - 190px);
-      --control-height: 2.75rem;
-    }
     .desktop-topbar {
       gap: var(--space-4);
       padding-inline: var(--space-4);
@@ -420,20 +388,20 @@
       flex: 1 0 100%;
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 4px;
+      gap: var(--space-1);
       min-width: 0;
     }
     .desktop-topbar nav > a {
       justify-content: center;
-      gap: 4px;
+      gap: var(--space-1);
       padding-inline: 2px;
-      font-size: 13px;
+      font-size: var(--text-xs);
       min-width: 0;
       min-block-size: var(--control-height);
     }
     @media (width < 24rem) {
       .desktop-topbar nav > a {
-        font-size: 12px;
+        font-size: var(--text-2xs);
       }
     }
     .desktop-shell > main {
@@ -456,16 +424,16 @@
       position: absolute;
       inset-block-start: 1px;
       inset-inline-end: 4px;
-      font-size: 11px;
+      font-size: var(--text-3xs);
       line-height: 1.2;
       min-width: 16px;
-      padding: 0 4px;
-      border-radius: 8px;
+      padding: 0 var(--space-1);
+      border-radius: var(--radius);
       text-align: center;
     }
     .desktop-footer {
       flex-wrap: wrap;
-      gap: 4px 12px;
+      gap: var(--space-1) var(--space-3);
     }
   }
 
@@ -484,16 +452,16 @@
   .setup-step .step-head {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
   .setup-step .step-head h2 {
     margin: 0;
-    font-size: 18px;
+    font-size: var(--text-l);
   }
   .setup-step .field-control {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
   .setup-step .field-control input {

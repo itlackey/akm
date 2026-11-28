@@ -287,7 +287,7 @@
   }
   .root text {
     fill: var(--bg);
-    font-size: 15px;
+    font-size: var(--text-m);
   }
   .root .name {
     font-weight: 700;
@@ -300,13 +300,13 @@
     stroke-width: 2;
   }
   .branch .figure {
-    font-size: 12px;
+    font-size: var(--text-2xs);
   }
   .root .figure {
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .branch text {
-    font-size: 13px;
+    font-size: var(--text-xs);
     fill: var(--text);
   }
   .branch .name {
@@ -322,7 +322,7 @@
     stroke-width: 3;
   }
   .leaf text {
-    font-size: 13px;
+    font-size: var(--text-xs);
     fill: var(--text);
   }
   .leaf .hit {

@@ -921,7 +921,7 @@
     inline-size: 100%;
     block-size: var(--stage-size, min(74vh, 800px));
     min-block-size: min(420px, var(--stage-size, 420px));
-    border-radius: 8px;
+    border-radius: var(--radius);
     overflow: hidden;
     background: var(--bg);
     cursor: grab;
@@ -941,7 +941,7 @@
     line-height: 18px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-small);
   }
   .stage-legend[open] {
     inline-size: max-content;
@@ -966,7 +966,7 @@
     display: grid;
     gap: 6px;
     margin: 0;
-    padding: 0 10px 8px;
+    padding: 0 10px var(--space-2);
     line-height: 20px;
   }
   .stage-legend summary::before {
@@ -979,7 +979,7 @@
   }
   .scale ol {
     display: flex;
-    gap: 2px 12px;
+    gap: 2px var(--space-3);
     align-items: center;
     block-size: 20px;
     margin: 0;
@@ -1023,14 +1023,14 @@
     margin-inline-start: -1px;
   }
   .view-buttons button:first-child {
-    border-start-start-radius: 4px;
-    border-end-start-radius: 4px;
+    border-start-start-radius: var(--radius-xs);
+    border-end-start-radius: var(--radius-xs);
   }
   .view-buttons .reset {
     inline-size: auto;
     padding: 0 10px;
-    border-start-end-radius: 4px;
-    border-end-end-radius: 4px;
+    border-start-end-radius: var(--radius-xs);
+    border-end-end-radius: var(--radius-xs);
   }
   .view-buttons button:hover {
     background: var(--surface-2);
@@ -1046,12 +1046,12 @@
     z-index: 2;
     max-inline-size: calc(100% - 16px);
     padding: 3px 10px;
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--text);
     background: var(--surface);
     border: 2px solid var(--map-highlight);
-    border-radius: 6px;
+    border-radius: var(--radius-small);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1073,7 +1073,7 @@
     align-items: baseline;
     padding: 0 2px;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     line-height: 1.3;
     white-space: nowrap;
@@ -1129,7 +1129,7 @@
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

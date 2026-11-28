@@ -806,7 +806,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0 1rem;
+    gap: 0 var(--space-4);
     flex: none;
   }
   .refresh {
@@ -814,7 +814,7 @@
     display: flex;
     align-items: center;
     margin-inline-start: auto;
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-2);
   }
   /* Beside the button, out of the flow, so showing it never moves anything. */
   .refresh-note {
@@ -827,11 +827,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: var(--space-4);
     flex-wrap: wrap;
   }
   .page-heading {
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-2);
     flex: 1 1 auto;
   }
   .page-heading h1 {
@@ -839,7 +839,7 @@
   }
   .review-filters {
     justify-content: flex-start;
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-2);
     flex: 1 1 100%;
   }
   .review-filters .tabs {
@@ -848,7 +848,7 @@
   .review-filters label {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-2);
     font-size: var(--text-s);
   }
   .shortcuts {
@@ -856,20 +856,20 @@
   }
   .shortcuts .check-label {
     display: flex;
-    margin-block: 0.75rem;
+    margin-block: var(--space-3);
   }
   .queue-utilities {
-    margin-top: 1.5rem;
+    margin-top: var(--space-5);
     font-size: var(--text-s);
   }
   .queue-utilities details {
-    margin: 0.5rem 0;
+    margin: var(--space-2) 0;
   }
   .queue-meta {
     display: flex;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 0.25rem 0.5rem;
+    gap: var(--space-1) var(--space-2);
     color: var(--muted);
     font-size: var(--text-xs);
   }
@@ -897,7 +897,7 @@
   .return-link {
     display: inline-block;
     font-size: var(--text-s);
-    margin-top: 0.5rem;
+    margin-top: var(--space-2);
   }
   /* A scroller clips what is outside its padding box, so each has room at its edges for a focus ring (2px, 2px away). */
   .review-list {
@@ -907,11 +907,11 @@
     overflow-y: auto;
   }
   .queue-summary {
-    margin: 0 0 1rem;
+    margin: 0 0 var(--space-4);
     font-size: var(--text-s);
   }
   .queue-summary p {
-    margin: 0 0 0.5rem;
+    margin: 0 0 var(--space-2);
   }
   .review-pane {
     min-width: 0;
@@ -926,7 +926,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 1rem 1.5rem 1.5rem;
+    padding: var(--space-4) var(--space-5) var(--space-5);
   }
   /* While the reject form is open, the change can scroll to the pane's top even when it is short. */
   .review-scroll.rejecting :global(.change) {
@@ -935,22 +935,22 @@
   .review-items {
     list-style: none;
     padding: 0;
-    margin: 0.5rem 0;
+    margin: var(--space-2) 0;
   }
   .review-row {
     display: flex;
     align-items: start;
-    gap: 0.5rem;
-    border-radius: 6px;
-    margin-bottom: 0.25rem;
+    gap: var(--space-2);
+    border-radius: var(--radius-small);
+    margin-bottom: var(--space-1);
   }
   .review-row > input {
-    margin-top: 1rem;
+    margin-top: var(--space-4);
   }
   .review-item {
     display: grid;
-    gap: 0.5rem;
-    padding: 0.875rem 0.5rem;
+    gap: var(--space-2);
+    padding: 0.875rem var(--space-2);
     min-width: 0;
     width: 100%;
     color: inherit;
@@ -964,32 +964,32 @@
     box-shadow: inset 3px 0 var(--accent);
   }
   .review-item strong {
-    font-size: 0.875rem;
+    font-size: var(--text-s);
   }
   .select-all {
     font-size: var(--text-s);
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-2);
     align-items: center;
   }
   .table-wrap {
     overflow-x: auto;
   }
   .state {
-    padding: 2rem 1rem;
+    padding: var(--space-6) var(--space-4);
   }
   .welcome {
     border: 0;
     background: none;
     box-shadow: none;
     text-align: left;
-    padding: 2rem 0.5rem;
+    padding: var(--space-6) var(--space-2);
   }
   /* Wide: the heading, tabs, filters and Refresh share one row, so the proposal gets the height. */
   @media (min-width: 851px) {
     .review-top {
       gap: var(--space-2) var(--space-5);
-      margin-bottom: 0.5rem;
+      margin-bottom: var(--space-2);
     }
     .review-top > .page-heading,
     .review-top > .review-filters {
@@ -1035,11 +1035,11 @@
       border-left: 0;
     }
     .review-scroll {
-      padding: 1rem 0 2rem;
+      padding: var(--space-4) 0 var(--space-6);
       overflow: visible;
     }
     .review-filters {
-      gap: 0.75rem;
+      gap: var(--space-3);
     }
     .review-filters label {
       display: grid;

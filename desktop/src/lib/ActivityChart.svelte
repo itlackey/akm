@@ -121,26 +121,26 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: var(--space-4);
     flex-wrap: wrap;
   }
   .chart-heading h2 {
     margin: 0;
-    font-size: 1.125rem;
+    font-size: var(--text-l);
   }
   .chart-tools {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: var(--space-4);
   }
   .chart-views {
     display: flex;
-    gap: 0.25rem;
+    gap: var(--space-1);
   }
   .chart-views button {
     color: var(--muted);
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
   }
   .chart-views button[aria-pressed="true"] {
     color: var(--text);
@@ -153,22 +153,22 @@
     overflow-x: auto;
   }
   .chart-data {
-    margin-top: 1rem;
+    margin-top: var(--space-4);
   }
   .empty-chart {
-    margin-block: 1rem;
-    padding: 1rem;
+    margin-block: var(--space-4);
+    padding: var(--space-4);
     border: 1px dashed var(--border-strong);
     color: var(--muted);
   }
   .chart-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem 1.25rem;
+    gap: var(--space-2) 1.25rem;
     list-style: none;
-    margin: 0.75rem 0;
+    margin: var(--space-3) 0;
     padding: 0;
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .chart-legend li {

@@ -128,42 +128,42 @@
 
 <style>
   .properties-form {
-    margin: 0 0 16px;
-    padding: 12px 16px;
+    margin: 0 0 var(--space-4);
+    padding: var(--space-3) var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     min-inline-size: 0;
   }
   legend {
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 600;
-    padding-inline: 4px;
+    padding-inline: var(--space-1);
   }
   .grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 4px 16px;
+    gap: var(--space-1) var(--space-4);
   }
   .field {
     display: grid;
-    gap: 4px;
-    font-size: 13px;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
     font-weight: 550;
   }
   .hint {
-    margin: 0 0 8px;
+    margin: 0 0 var(--space-2);
   }
   .add {
     display: flex;
     flex-wrap: wrap;
     align-items: end;
-    gap: 8px 12px;
-    margin-top: 8px;
-    font-size: 13px;
+    gap: var(--space-2) var(--space-3);
+    margin-top: var(--space-2);
+    font-size: var(--text-xs);
   }
   .add label {
     display: grid;
-    gap: 4px;
+    gap: var(--space-1);
     font-weight: 550;
   }
 </style>

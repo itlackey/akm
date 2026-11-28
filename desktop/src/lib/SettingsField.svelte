@@ -58,10 +58,10 @@
 <style>
   .source-badge {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: var(--text-2xs);
   }
   .field-head {
     flex-wrap: wrap;
-    gap: 0.35rem 0.75rem;
+    gap: 0.35rem var(--space-3);
   }
 </style>

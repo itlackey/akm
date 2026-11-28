@@ -165,14 +165,14 @@
     max-height: 40vh;
     overflow: auto;
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 4px;
-    margin-block: 8px;
+    border-radius: var(--radius-xs);
+    padding: var(--space-1);
+    margin-block: var(--space-2);
   }
   .copy-name {
     display: grid;
     gap: 6px;
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 550;
   }
   h2 {

@@ -100,7 +100,7 @@
 <style>
   .bundle-rename form {
     display: grid;
-    gap: 16px;
+    gap: var(--space-4);
     max-width: 680px;
   }
   .bundle-rename p {
@@ -112,11 +112,11 @@
     margin: 0;
   }
   .rename-preview {
-    padding: 16px 0;
+    padding: var(--space-4) 0;
     border-top: 1px solid var(--border);
   }
   .rename-preview p + p {
-    margin-top: 12px;
+    margin-top: var(--space-3);
   }
   .rename-preview ul {
     padding-left: 20px;

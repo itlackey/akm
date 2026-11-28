@@ -7,30 +7,31 @@
   :root {
     color-scheme: light dark;
     accent-color: var(--accent);
-    --bg: light-dark(#f6f6f9, #0a0a0c);
-    --surface: light-dark(#ffffff, #111115);
-    --surface-2: light-dark(#efeff4, #17171c);
-    --surface-sunk: light-dark(#e8e8ef, #0d0d10);
-    --border: light-dark(#dcdce4, #26262d);
-    --border-strong: light-dark(#767684, #6b6b78);
-    --rule: light-dark(#0f0f14, #52525e);
-    --text: light-dark(#0f0f14, #ededf0);
-    --muted: light-dark(#4a4a57, #b4b4be);
-    --faint: light-dark(#5d5d6a, #9a9aa6);
-    --accent: light-dark(#6d28d9, #9b72fa);
-    --accent-hover: light-dark(#5b21b6, #b79bfc);
-    --accent-bg: light-dark(#f0eafe, #1b1530);
-    --on-accent: light-dark(#ffffff, #0a0a0c);
+    --bg: light-dark(#f7f7fa, #15151a);
+    --surface: light-dark(#ffffff, #1c1c23);
+    --surface-2: light-dark(#f0f0f5, #25252e);
+    --surface-sunk: light-dark(#e9e9f0, #191920);
+    --border: light-dark(#e2e2ea, #363640);
+    --border-strong: light-dark(#81818f, #858594);
+    --rule: var(--border);
+    --text: light-dark(#23232e, #ececf2);
+    --muted: light-dark(#5c5c6d, #b8b8c7);
+    --faint: light-dark(#696979, #aaaaba);
+    --accent: light-dark(#6741c4, #b59aee);
+    --accent-hover: light-dark(#5432a5, #ccb8fa);
+    --accent-bg: light-dark(#eeebf8, #332b47);
+    --on-accent: light-dark(#ffffff, #20182d);
     --ok: light-dark(#17753a, #34d399);
     --ok-bg: light-dark(#e3f4e9, #0f2a20);
     --warn: light-dark(#8a5a00, #fbbf24);
     --warn-bg: light-dark(#fcf0d3, #2b2210);
     --fail: light-dark(#c4202c, #f87171);
+    --fail-hover: color-mix(in srgb, var(--fail) 85%, black);
     --fail-bg: light-dark(#fde6e8, #2d1416);
     --add-strong: light-dark(#a8e0bb, #1d6b49);
     --del-strong: light-dark(#f5b3b9, #7f2a2f);
     --hunk-bg: light-dark(#f3efff, #16162b);
-    --link: light-dark(#5b21b6, #c4b5fd);
+    --link: light-dark(#5936ad, #c9b4f6);
     --age-1: light-dark(#8f7bd1, #6a58b0);
     --age-2: light-dark(#6d4fc0, #8f7bdc);
     --age-3: light-dark(#4a2a9c, #c4b5fd);
@@ -51,7 +52,7 @@
     --map-4: light-dark(#8d9258, #f1ea3d);
     --map-5: light-dark(#0245a0, #8b55f6);
     --map-6: light-dark(#a13500, #b16d56);
-    --map-7: light-dark(#bc74c5, #755564);
+    --map-7: light-dark(#bc74c5, #795a69);
     --map-8: light-dark(#383838, #a6a6a6);
     --map-highlight: light-dark(#8c00ff, #cdffcd);
     /* Replay's pulses, one colour per event kind (read, search hit, positive and negative feedback), measured by
@@ -60,7 +61,7 @@
     --pulse-read: light-dark(#00000f, #00a5c3);
     --pulse-hit: light-dark(#e100e1, #f05aff);
     --pulse-up: light-dark(#00782d, #e1ff69);
-    --pulse-down: light-dark(#f01e3c, #c3001e);
+    --pulse-down: light-dark(#f01e3c, #c60d29);
     /* "Use" colouring: one hue in four steps, each step farther from --bg than the last (3.3, 5.2, 8 and 12 to 1), and a
        quieter mark for "never shown" that stays visible but is fainter than every used step. */
     --use-0: light-dark(#cbcfd6, #3b404b);
@@ -69,12 +70,17 @@
     --use-3: light-dark(#154a93, #76a7eb);
     --use-4: light-dark(#0e3161, #afccf4);
     --marker: light-dark(#a16207, #fbbf24);
+    /* Overlays: the dimming behind a modal dialog, the same in both schemes. */
+    --backdrop: rgb(0 0 0 / 0.55);
+    --scrim: rgb(0 0 0 / 0.4);
     --target-min: 24px;
-    --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
-    /* The bar sits at the top on wide screens and at the bottom on narrow ones. */
-    --top-inset: var(--topbar-h);
+    /* Layout: the top bar, the space it covers, the page width and the height a master-detail workspace fills. */
+    --topbar-h: 4rem;
+    --top-inset: 4rem;
     --bottom-inset: 0px;
-    --control-height: 2.75rem;
+    --content-max: 100rem;
+    --workspace-height: calc(100dvh - 158px);
+    --control-height: 2.5rem;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
@@ -82,16 +88,27 @@
     --space-5: 24px;
     --space-6: 32px;
     --space-7: 48px;
-    --radius: 2px;
+    --radius-xs: 4px;
+    --radius-small: 6px;
+    --radius: 8px;
+    --radius-large: 12px;
     --radius-pill: 999px;
-    --text-xs: 0.75rem;
-    --text-s: 0.8125rem;
+    /* Type sizes, smallest first. The named ones are the few heading sizes a view uses. */
+    --text-3xs: 0.6875rem;
+    --text-2xs: 0.75rem;
+    --text-xs: 0.8125rem;
+    --text-s: 0.875rem;
     --text-m: 0.9375rem;
+    --text-base: 1rem;
+    --text-subtitle: 1.0625rem;
     --text-l: 1.125rem;
+    --text-lead: 1.25rem;
+    --text-result: 1.3125rem;
     --text-xl: 1.375rem;
+    --text-heading: 1.5rem;
+    --text-title: 1.75rem;
     --text-2xl: clamp(2rem, 1.3rem + 2.6vw, 3.25rem);
     --text-stat: clamp(2rem, 1.5rem + 1.6vw, 2.75rem);
-    --content-max: 82rem;
     --leading: 1.55;
     --leading-tight: 1.05;
     --leading-snug: 1.5;
@@ -99,12 +116,23 @@
     --tracking-snug: -0.02em;
     --tracking-caps: 0.06em;
     --weight-strong: 600;
-    --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
+    /* Elevation, lowest first: a filter panel, a popover menu, a context menu, the floating draft bar; and the edge a
+       sticky footer casts over the content scrolling under it. */
+    --shadow-panel: 0 8px 24px rgb(0 0 0 / 0.1);
+    --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.12);
+    --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.25);
+    --shadow-float: 0 8px 28px rgb(24 24 40 / 0.12);
+    --shadow-sticky: 0 -8px 8px -8px rgb(0 0 0 / 0.15);
     --edge-accent: inset 3px 0 0 var(--accent);
     --edge-underline: inset 0 -3px 0 var(--accent);
+    --edge-tab: 0 2px 0 var(--accent);
     --edge-ok: inset 3px 0 0 var(--ok);
     --edge-warn: inset 3px 0 0 var(--warn);
     --edge-fail: inset 3px 0 0 var(--fail);
+    /* Keyboard focus: the ring on links and controls, the ring on list rows and cards, and the halo on text fields. */
+    --focus-ring: 2px solid var(--link);
+    --focus-ring-accent: 2px solid var(--accent);
+    --focus-offset: 2px;
     --focus-halo: 0 0 0 3px color-mix(in srgb, var(--link) 30%, transparent);
     --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -121,8 +149,15 @@
   @media (width < 72rem) {
     :root {
       --topbar-h: 3.5rem;
-      --top-inset: 0px;
-      --bottom-inset: calc(var(--topbar-h) + env(safe-area-inset-bottom, 0px));
+    }
+  }
+
+  /* Phones: the bar is one row of tabs, controls are taller to touch, and the workspace gives up the bar's height. */
+  @media (width < 48rem) {
+    :root {
+      --top-inset: 3.5rem;
+      --workspace-height: calc(100dvh - 190px);
+      --control-height: 2.75rem;
     }
   }
 }

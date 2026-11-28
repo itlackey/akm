@@ -374,7 +374,7 @@
 <style>
   .activity-toolbar {
     display: flex;
-    gap: 0.75rem;
+    gap: var(--space-3);
     align-items: end;
     flex-wrap: wrap;
   }
@@ -388,11 +388,11 @@
     flex-wrap: wrap;
     gap: 0 1.75rem;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 2rem;
+    margin-bottom: var(--space-6);
   }
   /* Replay's map takes the window: nothing stands between the tabs and it. */
   .activity-tabs.tight {
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-2);
   }
   .activity-tabs a {
     flex: none;
@@ -401,27 +401,27 @@
     display: flex;
     align-items: end;
     justify-content: space-between;
-    gap: 1rem 2rem;
+    gap: var(--space-4) var(--space-6);
     flex-wrap: wrap;
-    margin-bottom: 1.5rem;
+    margin-bottom: var(--space-5);
   }
   .page-header h1 {
     margin: 0;
   }
   .search-gaps {
-    margin-block: 2rem;
+    margin-block: var(--space-6);
     border-top: 1px solid var(--border);
-    padding-top: 1rem;
+    padding-top: var(--space-4);
   }
   .search-gaps h2 {
-    font-size: 1.125rem;
+    font-size: var(--text-l);
     font-weight: 600;
   }
   /* Phones: the wrapped tabs sit closer together, and each is as tall as a control. */
   @media (max-width: 760px) {
     .activity-tabs {
       gap: 0 1.25rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: var(--space-5);
     }
     .activity-tabs a {
       display: inline-flex;
@@ -436,14 +436,14 @@
   }
   .activity-tabs a.active {
     color: var(--text);
-    box-shadow: 0 2px var(--accent);
+    box-shadow: var(--edge-tab);
   }
   .history-filter {
     display: flex;
     flex-wrap: wrap;
     align-items: end;
-    gap: 0.75rem;
-    margin-block: 1rem;
+    gap: var(--space-3);
+    margin-block: var(--space-4);
   }
   .history-filter label {
     display: grid;

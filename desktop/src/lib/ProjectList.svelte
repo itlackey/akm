@@ -92,8 +92,8 @@
     background: var(--surface-2);
   }
   .project-card:has(a:focus-visible) {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    outline: var(--focus-ring-accent);
+    outline-offset: var(--focus-offset);
   }
   .card-head {
     display: flex;

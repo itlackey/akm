@@ -113,7 +113,7 @@
     display: block;
   }
   text {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     dominant-baseline: central;
     fill: var(--text);
   }
@@ -137,8 +137,8 @@
     text-decoration: underline;
   }
   a:focus-visible {
-    outline: 2px solid var(--link);
-    outline-offset: 2px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
   }
   .label.missing {
     fill: var(--muted);

@@ -363,7 +363,7 @@
     position: sticky;
     bottom: 0;
     background: var(--bg);
-    box-shadow: 0 -8px 8px -8px rgb(0 0 0 / 0.15);
+    box-shadow: var(--shadow-sticky);
     padding-block: var(--space-3);
     display: flex;
     justify-content: space-between;

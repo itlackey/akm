@@ -346,7 +346,7 @@
 <style>
   .item {
     margin: 20px 0;
-    padding: 16px 20px;
+    padding: var(--space-4) 20px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
   }
@@ -355,15 +355,15 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    margin: 0 0 8px;
-    font-size: 16px;
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-base);
   }
   .item p {
-    margin: 8px 0;
+    margin: var(--space-2) 0;
   }
   .command {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     align-items: center;
     flex-wrap: wrap;
   }

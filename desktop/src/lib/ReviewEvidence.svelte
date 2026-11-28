@@ -236,7 +236,7 @@
   }
   .facts dd {
     display: inline;
-    margin: 0 0 0 4px;
+    margin: 0 0 0 var(--space-1);
     font-weight: 550;
   }
   @media (width < 48rem) {
@@ -293,7 +293,7 @@
   .evidence-grid {
     display: grid;
     grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
-    gap: 0.45rem 1rem;
+    gap: 0.45rem var(--space-4);
     font-size: var(--text-s);
   }
   .evidence-grid dt {

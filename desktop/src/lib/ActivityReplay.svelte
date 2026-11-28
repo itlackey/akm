@@ -599,7 +599,7 @@
   /* The timeline is one strip: Play, the speed and the playhead's time beside the bars they act on. */
   .transport {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: start;
   }
   .transport :global(button),
@@ -610,19 +610,19 @@
     min-block-size: 28px;
     padding-block: 0;
     font-size: var(--text-s);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
   }
   /* Wide enough for "Play" and "Pause" alike, so the row does not shift; "Play from start" takes what it needs. */
   .transport :global(button) {
     min-inline-size: 64px;
-    padding-inline: 12px;
+    padding-inline: var(--space-3);
     white-space: nowrap;
   }
   .transport select {
     inline-size: 96px;
   }
   .stage-tools select {
-    padding-inline-start: 8px;
+    padding-inline-start: var(--space-2);
   }
   .period {
     inline-size: 140px;
@@ -703,12 +703,12 @@
     z-index: 4;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 4px 12px;
+    gap: var(--space-1) var(--space-3);
     align-items: center;
-    padding: 6px 12px;
+    padding: 6px var(--space-3);
     border: 1px solid var(--border);
     background: var(--surface);
-    margin-block-start: 8px;
+    margin-block-start: var(--space-2);
   }
   .timeline svg {
     display: block;
@@ -738,7 +738,7 @@
     margin: 0;
     padding: 0;
     display: flex;
-    gap: 4px 14px;
+    gap: var(--space-1) 14px;
   }
   .kinds li {
     display: flex;
@@ -755,7 +755,7 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
-    gap: 0 8px;
+    gap: 0 var(--space-2);
     min-block-size: 16px;
     font-size: var(--text-xs);
     color: var(--muted);
@@ -788,9 +788,9 @@
      The row never wraps: it leaves the corner to the panel's button. */
   .stage-tools {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
-    padding: 4px 44px 4px 8px;
+    padding: var(--space-1) 44px var(--space-1) var(--space-2);
   }
   .replay-map:has(:global(.stage-3d)) .stage-tools {
     position: absolute;
@@ -802,7 +802,7 @@
     padding: 3px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-small);
   }
   /* The panel's button holds the map's top corner beside the panel, open or closed. */
   .panel-toggle {
@@ -819,7 +819,7 @@
     color: var(--muted);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .panel-toggle[aria-expanded="true"] {
@@ -899,7 +899,7 @@
     color: var(--muted);
     background: none;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .icon-btn:hover {
