@@ -34,6 +34,7 @@ import { bundleWriteBlockers, fileActions } from "./file-actions";
 import { readFileRevision, readRecentCommits } from "./git-read";
 import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, durableRefForPath, withReadonlyStateDb } from "./readers";
 
+export { ruleChoices } from "../commands/read/rules";
 export { copyEntry } from "./copy-entry";
 export { graph } from "./graph";
 export { searchMisses } from "./misses";

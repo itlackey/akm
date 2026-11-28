@@ -120,7 +120,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 
 | Namespace | Operations |
 | --- | --- |
-| `assets` | `search`, `projectOverview`, `searchMisses`, `show`, `history`, `related`, `improvement`, `graph`, `bundleFiles`, `copyEntry`, `movedLinks`, `updateMovedLinks` |
+| `assets` | `search`, `projectOverview`, `ruleChoices`, `searchMisses`, `show`, `history`, `related`, `improvement`, `graph`, `bundleFiles`, `copyEntry`, `movedLinks`, `updateMovedLinks` |
 | `documents` | `readSource`, `save`, `createKnowledge`, `createFile`, `check`, `frontmatter`, `applyFrontmatter`, `copy`, `retire` |
 | `proposals` | `list`, `get`, `recentChanges`, `accept`, `reject`, `revert`, `reopen`, `acceptMany`, `rejectMany` |
 | `bundles` | `list`, `add`, `remove`, `update`, `index`, `rename`, `setSettings`, `commit` |

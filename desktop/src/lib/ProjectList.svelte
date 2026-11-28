@@ -7,7 +7,7 @@
 <script lang="ts">
   import { appHref } from "./client";
   import Icon from "./Icon.svelte";
-  import { filterLine, type ProjectRow } from "./projects-model";
+  import { filterLine, rulesLine, type ProjectRow } from "./projects-model";
 
   let { projects, warnings, configPath }: { projects: ProjectRow[]; warnings: string[]; configPath: string } = $props();
   const first = (row: ProjectRow) => row.entry.paths?.[0];
@@ -54,6 +54,7 @@
           {project.entry.write?.bundle ? `Writes to ${project.entry.write.bundle}` : "Writes to the default target"}
         </p>
         <p class="muted small">{filterLine(project.entry)}</p>
+        <p class="muted small">{rulesLine(project.entry)}</p>
       </article>
     {/each}
   </div>{/if}

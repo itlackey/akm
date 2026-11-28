@@ -15,6 +15,8 @@ export interface ProjectEntry {
   from?: string | string[];
   filters?: Scope;
   prefer?: Scope;
+  /** akm refs of the rules the project loads, in load order; absent: chosen by `project:` frontmatter. */
+  rules?: string[];
   write?: { bundle?: string; user?: string; agent?: string; channel?: string; metadata?: Record<string, Scalar> };
   [other: string]: unknown;
 }
@@ -30,6 +32,7 @@ export interface ProjectDraft {
   from: string[];
   filters: ScopeRow[];
   prefer: ScopeRow[];
+  rules: string[];
   bundle: string;
   user: string;
   agent: string;
@@ -89,6 +92,7 @@ export function projectDraft(name: string, entry: ProjectEntry = {}): ProjectDra
     from: list(entry.from),
     filters: scopeRows(entry.filters),
     prefer: scopeRows(entry.prefer),
+    rules: entry.rules ?? [],
     bundle: write.bundle ?? "",
     user: write.user ?? "",
     agent: write.agent ?? "",
@@ -113,7 +117,15 @@ export function draftErrors(draft: ProjectDraft): string[] {
  * shape (a one-element list, an empty object, the order of its values); fields Desktop has no control for stay too.
  */
 export function projectEntry(draft: ProjectDraft, original: ProjectEntry = {}): ProjectEntry {
-  const { paths: oldPaths, from: oldFrom, filters: oldFilters, prefer: oldPrefer, write: oldWrite, ...rest } = original;
+  const {
+    paths: oldPaths,
+    from: oldFrom,
+    filters: oldFilters,
+    prefer: oldPrefer,
+    rules: oldRules,
+    write: oldWrite,
+    ...rest
+  } = original;
   const base = projectDraft(draft.name, original);
   const text = (value: string) => value.trim() || undefined;
   const paths = draft.paths
@@ -165,6 +177,14 @@ export function projectEntry(draft: ProjectDraft, original: ProjectEntry = {}): 
         : {}),
     ...(filters ? { filters } : {}),
     ...(prefer ? { prefer } : {}),
+    // An empty list is invalid in akm: no rules removes the key.
+    ...(same(draft.rules, base.rules)
+      ? oldRules !== undefined
+        ? { rules: oldRules }
+        : {}
+      : draft.rules.length
+        ? { rules: draft.rules }
+        : {}),
     ...(write ? { write } : {}),
   };
   // Keys keep the order the file had them in, so an unchanged entry serializes as it was.
@@ -194,6 +214,32 @@ export function projectSummary(entry: ProjectEntry): string[] {
   ];
 }
 
+/** The list card's rules line: a list replaces the `project:` and shared selection. */
+export function rulesLine(entry: ProjectEntry): string {
+  const count = entry.rules?.length ?? 0;
+  return count
+    ? `Loads ${count} listed ${count === 1 ? "rule" : "rules"}, in order`
+    : "Rules: its project: rules and the shared ones";
+}
+
+/** What `GET /api/rules/choices` returns: the rules to choose from, and where a saved project's list stands. */
+export interface RuleChoices {
+  available: Array<{ ref: string; description?: string }>;
+  /** Each ref of the project's saved list as written; `problem` says why one loads nothing. */
+  listed: Array<{ ref: string; resolved?: string; description?: string; problem?: string }>;
+  /** What `akm rules` loads for the saved project now. */
+  applies: Array<{ ref: string; description?: string }>;
+}
+
+/** The list with the rule at `index` moved by `by` places; the list itself when that would leave it. */
+export function moveRule(rules: string[], index: number, by: -1 | 1): string[] {
+  const to = index + by;
+  if (to < 0 || to >= rules.length) return rules;
+  const next = [...rules];
+  [next[index], next[to]] = [next[to]!, next[index]!];
+  return next;
+}
+
 /** Names akm refuses for a project (`none` selects no project; the others would reach Object.prototype). */
 export const RESERVED_NAMES = ["none", "__proto__", "constructor", "prototype"];
 
@@ -212,6 +258,7 @@ export function draftChanges(draft: ProjectDraft, base: ProjectDraft): number {
   for (const key of ["name", "paths", "bundle", "user", "agent", "channel"] as const)
     if (draft[key] !== base[key]) count++;
   if (!same(draft.from, base.from)) count++;
+  if (!same(draft.rules, base.rules)) count++;
   for (const key of ["filters", "prefer", "metadata"] as const) {
     const rows = Math.max(draft[key].length, base[key].length);
     for (let i = 0; i < rows; i++) if (!same(draft[key][i], base[key][i])) count++;

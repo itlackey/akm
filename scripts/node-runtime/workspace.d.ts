@@ -143,6 +143,14 @@ export namespace assets {
   }): Promise<unknown>;
   /** A project's effective read bundles and write bundle, with each bundle's browse total and the count its filters leave eligible. */
   function projectOverview(input: { project: string }): unknown;
+  /**
+   * What a project's `rules` can choose from: every loadable rule of the enabled bundles (`available`, refs as `akm rules` prints them). With a `project`, also `listed` (each ref of its `rules` as written, with the rule it resolves to or the `problem` that stops it loading) and `applies` (the rules `akm rules` loads for it now). Records no usage event.
+   */
+  function ruleChoices(input: { project?: string }): {
+    available: Array<{ ref: string; description?: string }>;
+    listed: Array<{ ref: string; resolved?: string; description?: string; problem?: string }>;
+    applies: Array<{ ref: string; description?: string }>;
+  };
   function searchMisses(input?: { since?: string }): unknown;
   function show(input: { ref: string }): Promise<unknown>;
   /** Rewrite the links to moved refs in one bundle, and nothing else; a read-only bundle is refused. */

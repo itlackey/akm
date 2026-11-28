@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
@@ -281,4 +281,91 @@ test("Project assets: Show 50 more appends in place and focuses the first new ro
     50,
     "focus is on the first new row",
   );
+});
+
+const withRules = async (fixture) => {
+  await configure(fixture);
+  const rule = (bundle, name, description) =>
+    mkdir(path.dirname(path.join(fixture.root, bundle, "rules", name)), { recursive: true }).then(() =>
+      writeFile(path.join(fixture.root, bundle, "rules", name), `---\ndescription: ${description}\n---\nBe kind.\n`),
+    );
+  await rule("personal", "shared.md", "Synthetic common rule");
+  await rule("personal", "acme/development.md", "Synthetic acme rule");
+  await rule("shared", "review.md", "Synthetic review rule");
+  const file = path.join(fixture.root, "config/config.json");
+  const config = JSON.parse(await readFile(file, "utf8"));
+  config.projects.ruled = {
+    paths: ["~/code/ruled"],
+    rules: ["rules/shared", "shared//rules/review", "rules/gone"],
+  };
+  await writeFile(file, JSON.stringify(config, null, 2));
+};
+
+test("Project rules: choose, reorder with buttons, save the refs, see what no longer resolves, clear the key", {
+  timeout: 240000,
+}, async (t) => {
+  const server = await launchFixture({ configureFixture: withRules });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const order = () => page.getByRole("list", { name: "Load order" }).getByRole("listitem");
+  const refs = async () => (await order().locator(".mono").allInnerTexts()).map((text) => text.trim());
+
+  // The overview and the list say that a list replaces automatic selection.
+  await open(page, server, "/projects");
+  await expect(page.getByRole("article").filter({ hasText: "ruled" })).toContainText("Loads 3 listed rules, in order");
+  await expect(page.getByRole("article").filter({ hasText: "notes" })).toContainText(
+    "its project: rules and the shared",
+  );
+  await page.goto(`${server.origin}/projects/ruled`);
+  const section = page.getByRole("region", { name: "Rules" });
+  await expect(section).toContainText("This list replaces automatic selection");
+  await expect(section).toContainText("Not found");
+
+  // The form lists the choices, marks the chosen ones, and flags the ref that resolves to nothing.
+  await page.goto(`${server.origin}/projects/ruled/edit`);
+  await expect(page.getByRole("checkbox", { name: /^rules\/shared / })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /^shared\/\/rules\/review / })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /^rules\/acme\/development / })).not.toBeChecked();
+  await expect(page.getByText("A list replaces automatic selection")).toBeVisible();
+  await expect(page.getByText("Loaded today (saved settings): rules/shared, shared//rules/review")).toBeVisible();
+  assert.deepEqual(await refs(), ["rules/shared", "shared//rules/review", "rules/gone"]);
+  await expect(order().nth(2)).toContainText("Not found: no enabled bundle holds it");
+
+  // Remove the dangling ref; focus stays in the list.
+  await page.getByRole("button", { name: "Remove rules/gone from the list" }).click();
+  await expect(page.getByRole("button", { name: "Remove shared//rules/review from the list" })).toBeFocused();
+  // Choosing a rule appends it; the buttons reorder it, and the keyboard alone is enough.
+  await page.getByRole("checkbox", { name: /^rules\/acme\/development / }).check();
+  assert.deepEqual(await refs(), ["rules/shared", "shared//rules/review", "rules/acme/development"]);
+  await page.getByRole("button", { name: "Move rules/acme/development up" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Move rules/acme/development up" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  assert.deepEqual(await refs(), ["rules/acme/development", "rules/shared", "shared//rules/review"]);
+  // At the top the Up button is disabled, so focus moves to Down rather than being lost.
+  await expect(page.getByRole("button", { name: "Move rules/acme/development up" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Move rules/acme/development down" })).toBeFocused();
+  await expect(page.getByText("1 unsaved change")).toBeVisible();
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved project “ruled”" })).toBeVisible();
+  assert.deepEqual((await configOf(server)).projects.ruled.rules, [
+    "rules/acme/development",
+    "rules/shared",
+    "shared//rules/review",
+  ]);
+
+  // Clearing the list removes the key, and the form says automatic selection is back.
+  await page.goto(`${server.origin}/projects/ruled/edit`);
+  for (const name of [/^rules\/acme\/development /, /^rules\/shared /, /^shared\/\/rules\/review /])
+    await page.getByRole("checkbox", { name }).uncheck();
+  await expect(page.getByText("With no list, this project gets the rules marked project=ruled")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Load order" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect(page).toHaveURL(/\/projects\/ruled$/);
+  assert.equal("rules" in (await configOf(server)).projects.ruled, false);
+  assert.deepEqual(errors, []);
 });

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - A project can list the rules its sessions load: `projects.<name>.rules`, a list of refs (`["rules/acme/development", "team//rules/review"]`). `akm rules` then returns exactly those, in that order, from any enabled bundle, instead of matching `project:`; a listed ref that is missing, not a rule or proposed is skipped with a warning. `--from` or `--filter` still selects as before. See [`akm rules`](docs/reference/cli.md#rules).
+- Desktop's project form chooses and orders a project's rules (`projects.<name>.rules`): it lists the rules of the enabled bundles, reorders the chosen ones with buttons, shows a listed ref that no longer resolves, and says that a list replaces automatic selection. `assets.ruleChoices` in `akm-cli/workspace` supplies the choices and what `akm rules` loads now, without recording a usage event.
 
 ### Changed
 

@@ -6,12 +6,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assetCounts,
+  draftChanges,
   draftErrors,
+  moveRule,
   projectChange,
   projectDraft,
   projectEntry,
   projectRows,
   projectSummary,
+  rulesLine,
 } from "../src/lib/projects-model.ts";
 
 const acme = {
@@ -170,4 +173,39 @@ test("a project's asset counts are akm's; a bundle akm gave no count for makes t
   assert.equal(assetCounts([counted(10, 4), { total: null, eligible: null }]), null);
   assert.equal(assetCounts([{ total: null, eligible: null }]), null);
   assert.equal(assetCounts([{ total: { count: 3, byType: {} }, eligible: null }]), null);
+});
+
+test("a project's rules round-trip as listed, in order, and clearing them removes the key", () => {
+  const original = { paths: ["/a"], rules: ["rules/shared", "team//rules/review"], write: { channel: "x" } };
+  const draft = projectDraft("p", original);
+  assert.deepEqual(draft.rules, ["rules/shared", "team//rules/review"]);
+  assert.equal(JSON.stringify(projectEntry(draft, original)), JSON.stringify(original));
+  assert.equal(draftChanges(draft, projectDraft("p", original)), 0);
+
+  draft.rules = moveRule(draft.rules, 1, -1);
+  assert.deepEqual(projectEntry(draft, original).rules, ["team//rules/review", "rules/shared"]);
+  assert.equal(draftChanges(draft, projectDraft("p", original)), 1);
+
+  // An empty list is invalid in akm, so none selected writes no key; a new project starts without one.
+  draft.rules = [];
+  assert.deepEqual(projectEntry(draft, original), { paths: ["/a"], write: { channel: "x" } });
+  assert.deepEqual(projectEntry(projectDraft("new")), {});
+  const added = projectDraft("new");
+  added.rules = ["rules/shared"];
+  assert.deepEqual(projectEntry(added), { rules: ["rules/shared"] });
+});
+
+test("moving a rule swaps it with its neighbour and stops at the ends", () => {
+  const list = ["a", "b", "c"];
+  assert.deepEqual(moveRule(list, 2, -1), ["a", "c", "b"]);
+  assert.deepEqual(moveRule(list, 0, 1), ["b", "a", "c"]);
+  assert.equal(moveRule(list, 0, -1), list);
+  assert.equal(moveRule(list, 2, 1), list);
+  assert.deepEqual(list, ["a", "b", "c"]);
+});
+
+test("the list card says whether a rules list replaces automatic selection", () => {
+  assert.equal(rulesLine({}), "Rules: its project: rules and the shared ones");
+  assert.equal(rulesLine({ rules: ["rules/a"] }), "Loads 1 listed rule, in order");
+  assert.equal(rulesLine({ rules: ["rules/a", "rules/b"] }), "Loads 2 listed rules, in order");
 });
