@@ -672,73 +672,89 @@ test("different internal and public hosts: the public origin is what the framewo
   assert.equal((await app.request("/api/session", { host: "akm-internal", headers: app.bearer })).status, 200);
 });
 
-test("an embedding app's style sheet (?theme=) sets the UI's tokens, from a frame parent only, and stays for the frame", {
+test("an embedding app sets the UI's tokens on #akm-web: in its document, or by message from the frame's parent", {
   timeout: 120000,
 }, async (t) => {
-  // The embedding app: its own style sheet and a page that frames the UI at `?src=`. Another origin serves a sheet too.
-  const sheet =
-    ":root { --accent: #0a7f5a; --accent-hover: #086848; --link: #086848; --font: Georgia, serif; --radius: 0px; --radius-small: 0px; }";
-  const served = { other: 0 };
-  const listen = async (handler) => {
-    const listener = http.createServer(handler);
-    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-    t.after(() => listener.close());
-    return `http://127.0.0.1:${listener.address().port}`;
-  };
-  const parent = await listen((req, res) => {
-    const url = new URL(req.url, "http://parent");
-    if (url.pathname === "/akm-theme.css") return res.writeHead(200, { "Content-Type": "text/css" }).end(sheet);
+  const css = "#akm-web { --accent: #0a7f5a; --font: Georgia, serif; --radius: 0px; --radius-small: 0px; }";
+  // The embedding app on another origin: a page that frames the UI at `?src=` and answers the UI's `akmReady` with its overrides.
+  const listener = http.createServer((req, res) => {
+    const src = new URL(req.url, "http://parent").searchParams.get("src");
+    const send = new URL(req.url, "http://parent").searchParams.has("send");
     res
       .writeHead(200, { "Content-Type": "text/html" })
-      .end(`<!doctype html><iframe id="f" src="${url.searchParams.get("src")}" width="1200" height="800"></iframe>`);
+      .end(
+        `<!doctype html><iframe id="f" src="${src}" width="1200" height="800"></iframe>` +
+          (send
+            ? `<script>addEventListener("message", (e) => { if (e.data?.akmReady) e.source.postMessage({ akmCss: ${JSON.stringify(css)} }, "*"); });</script>`
+            : ""),
+      );
   });
-  const other = await listen((_req, res) => {
-    served.other++;
-    res.writeHead(200, { "Content-Type": "text/css" }).end(":root { --accent: #c4202c; }");
-  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => listener.close());
+  const parent = `http://127.0.0.1:${listener.address().port}`;
   const app = await start(t, { web: { frameParents: [parent] } });
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const screenshots = process.env.AKM_DESKTOP_SCREENSHOTS || path.join(app.fixture.root, "screenshots");
   await mkdir(screenshots, { recursive: true });
-  /** A new tab (a new session) on the parent page, framing the UI at `route`. */
-  const framed = async (route) => {
+  const accentOf = (frame) =>
+    frame
+      .locator("html")
+      .evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+  /** A new tab on the parent page, framing the UI at `route`; `send` has the parent answer with its overrides. */
+  const framed = async (route, send) => {
     const page = await browser.newPage({ viewport: { width: 1240, height: 840 } });
     await page.setExtraHTTPHeaders(app.bearer);
-    await page.goto(`${parent}/?src=${encodeURIComponent(`${app.origin}${route}`)}`);
+    await page.goto(`${parent}/?${send ? "send&" : ""}src=${encodeURIComponent(`${app.origin}${route}`)}`);
     const frame = page.frameLocator("#f");
     await expect(frame.getByRole("navigation", { name: "Primary navigation" })).toBeVisible({ timeout: 30000 });
-    const accent = () =>
-      frame
-        .locator("html")
-        .evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
-    return { page, frame, accent };
+    return { page, frame };
   };
-  const themed = await framed(`/settings/config?theme=${encodeURIComponent(`${parent}/akm-theme.css`)}`);
-  await expect.poll(themed.accent).toBe("#0a7f5a");
-  await themed.page.screenshot({ path: path.join(screenshots, "theme-framed-with-sheet.png") });
-  // Client navigation keeps it, and so does a reload of an address with no `theme`, within the frame's session.
+
+  const plain = await framed("/settings/config", false);
+  const own = await accentOf(plain.frame);
+  assert.notEqual(own, "#0a7f5a");
+  await plain.page.screenshot({ path: path.join(screenshots, "theme-framed-without-css.png") });
+  // A message from anything but the parent page (here the frame itself) is ignored.
+  await plain.frame.locator("html").evaluate((_, akmCss) => window.postMessage({ akmCss }, "*"), css);
+  await plain.page.waitForTimeout(200);
+  assert.equal(await accentOf(plain.frame), own);
+
+  const themed = await framed("/settings/config", true);
+  await expect.poll(() => accentOf(themed.frame)).toBe("#0a7f5a");
+  await themed.page.screenshot({ path: path.join(screenshots, "theme-framed-with-css.png") });
+  // Client navigation keeps it.
   await themed.frame
     .getByRole("navigation", { name: "Primary navigation" })
     .getByRole("link", { name: /^Library(?:\s|$)/ })
     .click();
   await expect.poll(() => themed.page.frames()[1].url()).toMatch(new RegExp(`^${app.origin}/library`));
-  assert.equal(await themed.accent(), "#0a7f5a", "after client navigation");
-  await themed.frame.locator("html").evaluate(() => location.reload());
-  await expect(themed.frame.getByRole("navigation", { name: "Primary navigation" })).toBeVisible({ timeout: 30000 });
-  await expect.poll(themed.accent).toBe("#0a7f5a");
+  assert.equal(await accentOf(themed.frame), "#0a7f5a", "after client navigation");
 
-  // A new session without `theme` has the UI's own look.
-  const plain = await framed("/settings/config");
-  const own = await plain.accent();
-  assert.notEqual(own, "#0a7f5a");
-  await plain.page.screenshot({ path: path.join(screenshots, "theme-framed-without-sheet.png") });
-
-  // A sheet from an origin that is not a frame parent is linked, but the page's policy stops the browser loading it.
-  const refused = await framed(`/?theme=${encodeURIComponent(`${other}/akm-theme.css`)}`);
-  assert.equal(await refused.frame.locator(`link[href="${other}/akm-theme.css"]`).count(), 1);
-  assert.equal(await refused.accent(), own);
-  assert.equal(served.other, 0, "the browser never requested it");
+  // In the UI's own document (a same-origin app or an extension) a plain style does it, and the Theme control still works.
+  const page = await browser.newPage();
+  await page.setExtraHTTPHeaders(app.bearer);
+  await page.goto(`${app.origin}/settings/config`);
+  await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible({ timeout: 30000 });
+  await page.addStyleTag({ content: "#akm-web { --accent: light-dark(#0a7f5a, #5fd3a6); }" });
+  // The colour the accent resolves to, through a probe that uses it.
+  const accent = () =>
+    page.evaluate(() => {
+      const probe = document.body.appendChild(
+        Object.assign(document.createElement("span"), { style: "color: var(--accent)" }),
+      );
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+  for (const [scheme, color] of [
+    ["light", "rgb(10, 127, 90)"],
+    ["dark", "rgb(95, 211, 166)"],
+  ]) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), scheme);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), scheme);
+    assert.equal(await accent(), color, scheme);
+  }
 });
 
 test("framing: denied by default; allowed for exactly the configured parents", async (t) => {
@@ -758,19 +774,13 @@ test("framing: denied by default; allowed for exactly the configured parents", a
   );
   assert.doesNotMatch(csp, /frame-ancestors 'none'/);
   assert.match(csp, /script-src[^;]*'nonce-/, "the rest of the policy is Kit's");
-  // Style sheets also from exactly the parents (an embedding app's `?theme=`); nothing else in the policy changes.
+  // Framing changes only `frame-ancestors`; style sheets stay the UI's own.
   const policy = (value) => value.replace(/'nonce-[^']+'/g, "'nonce'");
   const unframed = policy(denied.headers["content-security-policy"]);
-  assert.equal(unframed.match(/style-src[^;]*/)[0], "style-src 'self' 'unsafe-inline'", "unframed: unchanged");
-  assert.equal(
-    csp.match(/style-src[^;]*/)[0],
-    "style-src 'self' 'unsafe-inline' http://parent.example:8080 https://other.example",
-  );
+  assert.equal(csp.match(/style-src[^;]*/)[0], "style-src 'self' 'unsafe-inline'");
   assert.equal(
     policy(csp),
-    unframed
-      .replace(/style-src[^;]*/, "style-src 'self' 'unsafe-inline' http://parent.example:8080 https://other.example")
-      .replace(/frame-ancestors[^;]*/, "frame-ancestors http://parent.example:8080 https://other.example"),
+    unframed.replace(/frame-ancestors[^;]*/, "frame-ancestors http://parent.example:8080 https://other.example"),
   );
   assert.equal(allowed.headers["x-frame-options"], undefined);
   const unlisted = (await framed.request("/", { headers: { Accept: "text/html" } })).headers;

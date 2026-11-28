@@ -42,17 +42,14 @@ export const handle: Handle = async ({ event, resolve }) => {
   // The form posts to /api/session from wherever the page is, which behind a path prefix is not the site root.
   const up = "../".repeat(path.split("/").length - 2);
 
-  // Every response: no caching, and framing allowed for exactly the configured parents or denied. When framed, style
-  // sheets may also come from those parents: the embedding app's own, named with `?theme=` (hooks.client.ts).
+  // Every response: no caching, and framing allowed for exactly the configured parents or denied.
   const finish = (response: Response) => {
     response.headers.set("X-Content-Type-Options", "nosniff");
     if (!response.headers.has("Referrer-Policy")) response.headers.set("Referrer-Policy", "no-referrer");
     response.headers.set("Cache-Control", "no-store");
     if (framed) {
       const directive = `frame-ancestors ${frameParents.join(" ")}`;
-      const csp = response.headers
-        .get("content-security-policy")
-        ?.replace(/style-src[^;]*/, (styles) => `${styles} ${frameParents.join(" ")}`);
+      const csp = response.headers.get("content-security-policy");
       response.headers.delete("X-Frame-Options");
       response.headers.set(
         "Content-Security-Policy",

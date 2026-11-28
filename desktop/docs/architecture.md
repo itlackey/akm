@@ -137,8 +137,7 @@ or an allowed host (a name or address with an optional port; checked before the 
 every write must carry an `Origin` equal to the origin, programs included. Only a `Bearer` credential is the secret's
 header; a wrong one is refused with `401` and never falls back to the cookie. The app validates JSON body sizes, does not
 enable CORS and sends `Cache-Control: no-store`. The secret is redacted by AKM's configuration inspector. Framing is
-denied unless `frameParents` names origins, which then replace the `frame-ancestors` directive and are added to
-`style-src`, for the style sheet an embedding app names with `?theme=` ([Theming](theming.md)); with an `https`
+denied unless `frameParents` names origins, which then replace the `frame-ancestors` directive; with an `https`
 origin the cookie then becomes `SameSite=None; Secure; Partitioned`. On `SIGTERM`, `SIGINT` or the `shutdown` message
 the server stops accepting connections and gives requests in flight and running child processes up to 10 seconds. It
 then terminates what still runs (the child's process group gets `SIGTERM`, then `SIGKILL` after 2 seconds), waits
