@@ -15,6 +15,7 @@ type Step = {
   id?: string;
   name?: string;
   if?: string;
+  "continue-on-error"?: boolean;
   run?: string;
   env?: Record<string, string>;
   uses?: string;
@@ -274,6 +275,23 @@ describe("release workflow", () => {
     expect(source).toContain("DIST_TAG: $" + "{{ needs.release.outputs.dist_tag }}");
   });
 
+  test("a stable at or above `next` moves `next` to it, for akm-cli and then akm-web, without stopping the release", () => {
+    const steps = workflow.jobs.release?.steps ?? [];
+    const next = steps.find((step) => step.name === "Point next at the stable");
+    expect(next?.if).toContain("env.DIST_TAG == 'latest'");
+    expect(next?.["continue-on-error"]).toBe(true);
+    expect(next?.run).toContain('require("semver").gte(process.argv[1], process.argv[2])');
+    expect(next?.run).toContain('npm dist-tag add "akm-cli@$CANDIDATE_VERSION" next');
+    // It runs after the publish, in the job whose trusted publisher authenticates it.
+    expect(steps.findIndex((step) => step.name === "Publish to npm")).toBeLessThan(steps.indexOf(next as never));
+    expect(source).toContain("next_follows: $" + "{{ steps.next.outputs.next_follows }}");
+    const web = workflow.jobs["akm-web"]?.steps?.find((step) => step.name === "Point akm-web's next at the stable");
+    expect(web?.if).toContain("needs.release.outputs.next_follows == 'true'");
+    expect(web?.["continue-on-error"]).toBe(true);
+    expect(web?.run).toContain("npm install -g npm@latest");
+    expect(web?.run).toContain('@$VERSION" next');
+  });
+
   test("a stable is GitHub's Latest release only when it is higher than the one that is", () => {
     // GitHub makes every newly published stable release Latest, whatever its version, and AKM Desktop's stable line
     // reads Latest: an older line's stable published after a newer line's must not take it.
@@ -333,9 +351,9 @@ describe("release workflow", () => {
     const skipped = (job: string) =>
       workflow.jobs[job]?.steps?.filter((step) => step.if?.includes("!inputs.dry_run")).map((step) => step.name);
     // Everything that reads a secret or tags is skipped; the builds are not.
-    expect(skipped("release")).toEqual(["Publish to npm", "Create GitHub release"]);
+    expect(skipped("release")).toEqual(["Publish to npm", "Point next at the stable", "Create GitHub release"]);
     expect(skipped("desktop")).toEqual(["Attach Desktop to the GitHub release"]);
-    expect(skipped("akm-web")).toEqual(["Publish akm-web to npm"]);
+    expect(skipped("akm-web")).toEqual(["Publish akm-web to npm", "Point akm-web's next at the stable"]);
     expect(workflow.jobs["akm-web"]?.permissions).toEqual({ contents: "read", "id-token": "write" });
     // The gates are skipped, and a skipped job upstream would skip Desktop unless it says it runs after a good release.
     expect(workflow.jobs.desktop?.if).toContain("needs.release.result == 'success'");

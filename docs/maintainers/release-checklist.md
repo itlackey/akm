@@ -137,6 +137,14 @@ On the release branch with everything pushed:
    binaries, the installers and `checksums.txt`, builds and attaches Desktop,
    and publishes `akm-web`. CI is not run again. A failed gate stops the
    release before anything is published.
+
+   It also moves npm `next` of `akm-cli` and `akm-web` to the stable, unless
+   `next` holds a newer line's prerelease, so the prerelease channel never
+   trails `latest`. Trusted publishing authenticates this only when each
+   package's trusted publisher has **Allow npm dist-tag** on (npmjs.com →
+   the package → Settings → Trusted publishing). Without it the step fails
+   on the run and the release goes on; move the tag by hand:
+   `npm dist-tag add akm-cli@<version> next`.
 4. Cut the next release branch ([section 1](#1-cut-a-release-branch)).
 
 If Release fails on a flake, rerun the failed jobs: a rerun on the same commit
