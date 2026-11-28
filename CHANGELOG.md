@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - A stable release also moves npm's `next` tag of `akm-cli` and `akm-web` to it, unless `next` holds a newer line's prerelease, so `akm-cli@next` and `akm-web@next` never trail `latest`.
 
+### Fixed
+
+- A git or website bundle named only in config (no lock entry) lists the directory akm reads it from: `akm bundle list` gave it no path, so AKM Desktop showed its Path as "Not available" and "Not a Git repository", and opening one of its files said "Choose a file in an enabled bundle". One not fetched yet still has no path.
+
 ## [0.10.261135] - 2026-11-27
 
 ### Added

@@ -271,6 +271,19 @@ export function resolveEntryContent(entry: SourceConfigEntry): { dir: string } |
 }
 
 /**
+ * A bundle's root as `akm bundle list` shows it: its lock entry's root, else its configured path, else the directory
+ * {@link resolveEntryContent} reads it from (a git or website bundle named only in config), or "" when that is not on
+ * disk (not fetched yet).
+ */
+export function listedBundleRoot(entry: SourceConfigEntry, lockRoot: string | undefined): string {
+  const known = lockRoot ?? entry.path;
+  if (known !== undefined) return known;
+  const content = resolveEntryContent(entry);
+  // asset-io: bundle-root whether the content root is a directory; reads no asset
+  return "dir" in content && fs.statSync(content.dir, { throwIfNoEntry: false })?.isDirectory() ? content.dir : "";
+}
+
+/**
  * Find which source a file path belongs to.
  *
  * Longest-matching-prefix wins: a source nested inside another (e.g. `akm add

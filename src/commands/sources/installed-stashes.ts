@@ -37,6 +37,7 @@ import {
 } from "../../indexer/index-build";
 import type { SemanticSearchStatus } from "../../indexer/index-context";
 import type { IndexOptions, IndexResponse } from "../../indexer/indexer";
+import { listedBundleRoot } from "../../indexer/search/search-source";
 import type { LockfileEntry } from "../../integrations/lockfile";
 import { readLockfile, upsertLockEntry } from "../../integrations/lockfile";
 import { parseRegistryRef, resolveRegistryArtifact } from "../../registry/resolve";
@@ -263,7 +264,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
     const lock = locks.get(key);
     const kind = bundle.type as SourceKind;
     if (kindFilter && !kindFilter.includes(kind)) continue;
-    const root = lock?.localRoot ?? bundle.path ?? "";
+    const root = listedBundleRoot(bundle, lock?.localRoot);
     const described = describeAdapter(configured, root || undefined);
     const bundleCounts = counts.get(key) ?? { itemCount: 0, byType: {} };
     sources.push({
@@ -293,7 +294,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
                 adapterId: configured.adapter,
               })
             : root
-              ? directoryExists(root)
+              ? isDirectory(root)
               : true,
       },
     });
@@ -1290,14 +1291,5 @@ function cleanupDirectoryBestEffort(target: string, context: string): void {
       `[akm ${context}] failed to remove directory ${target}: ${toErrorMessage(err)}. ` +
         "Remove it manually if it is no longer needed.",
     );
-  }
-}
-
-function directoryExists(target: string): boolean {
-  try {
-    // asset-io: install
-    return fs.statSync(target).isDirectory();
-  } catch {
-    return false;
   }
 }
