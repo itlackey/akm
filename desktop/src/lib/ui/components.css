@@ -788,8 +788,8 @@
     border-color: var(--fail);
     color: var(--on-accent);
     &:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--fail) 85%, black);
-      border-color: color-mix(in srgb, var(--fail) 85%, black);
+      background: var(--fail-hover);
+      border-color: var(--fail-hover);
     }
   }
 
@@ -990,8 +990,8 @@
       cursor: pointer;
     }
     & input:focus-visible + span {
-      outline: 2px solid var(--link);
-      outline-offset: 2px;
+      outline: var(--focus-ring);
+      outline-offset: var(--focus-offset);
     }
     @media (forced-colors: active) {
       & input:checked + span {

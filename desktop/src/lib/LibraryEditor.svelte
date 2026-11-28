@@ -524,8 +524,8 @@
     display: flex;
     justify-content: space-between;
     align-items: start;
-    gap: 24px;
-    margin-bottom: 16px;
+    gap: var(--space-5);
+    margin-bottom: var(--space-4);
   }
   .editor-header h1 {
     font-size: 26px;
@@ -544,14 +544,14 @@
     flex: none;
     flex-wrap: wrap;
     justify-content: end;
-    gap: 8px 20px;
-    font-size: 13px;
+    gap: var(--space-2) 20px;
+    font-size: var(--text-xs);
   }
   .editor-return a {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     white-space: nowrap;
   }
   .reason {
@@ -560,10 +560,10 @@
   .editor-columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+    gap: var(--space-4);
   }
   .findings {
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .findings ul {
     margin: 0;
@@ -576,8 +576,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 8px;
-    margin: 12px 0 8px;
+    gap: var(--space-1) var(--space-2);
+    margin: var(--space-3) 0 var(--space-2);
   }
   .properties-switch button[aria-pressed="true"] {
     background: var(--accent-bg);
@@ -601,11 +601,11 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px 16px;
+    gap: var(--space-2) var(--space-4);
   }
   .editor-tabs {
     display: flex;
-    gap: 4px;
+    gap: var(--space-1);
     background: var(--surface-2);
     border-radius: 5px;
     padding: 3px;
@@ -617,9 +617,9 @@
     background: none;
     border: 1px solid transparent;
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--text-xs);
     min-height: var(--control-height, 40px);
-    padding: 6px 12px;
+    padding: 6px var(--space-3);
   }
   .editor-tabs button[aria-selected="true"] {
     border-color: var(--border);
@@ -630,31 +630,31 @@
     grid-column: 2;
     grid-row: 1;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: var(--text-xs);
     min-height: var(--control-height, 40px);
-    padding: 8px 16px;
+    padding: var(--space-2) var(--space-4);
   }
   .editor-status {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 12px 0;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-2xs);
     line-height: 1.5;
   }
   .editor-status > div {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 20px;
+    gap: var(--space-1) 20px;
   }
   .discard-action {
     background: none;
     border: 0;
     color: var(--muted);
-    font-size: 12px;
-    padding: 8px 0;
+    font-size: var(--text-2xs);
+    padding: var(--space-2) 0;
     font-weight: 400;
     white-space: nowrap;
   }
@@ -672,11 +672,11 @@
     display: flex;
     flex-wrap: wrap;
     gap: 2px;
-    padding: 4px;
+    padding: var(--space-1);
     background: var(--surface-2);
     border-radius: var(--radius, 6px);
     max-width: fit-content;
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
   }
   .formatting-tools button {
     background: none;
@@ -684,7 +684,7 @@
     border: 1px solid transparent;
     min-height: var(--control-height, 40px);
     padding: 6px 10px;
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 500;
   }
   .formatting-tools button:hover {
@@ -701,11 +701,11 @@
     display: block;
     inline-size: 100%;
     font-family: var(--mono);
-    font-size: 14px;
+    font-size: var(--text-s);
     line-height: 1.75;
     min-height: 440px;
     height: calc(100dvh - 390px);
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     border: 0;
     border-radius: 0;
     resize: vertical;
@@ -713,13 +713,13 @@
     box-shadow: none;
   }
   .source-editor:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: var(--focus-ring-accent);
     outline-offset: 6px;
   }
   #editor-preview {
     max-width: 76ch;
-    padding-top: 16px;
-    font-size: 16px;
+    padding-top: var(--space-4);
+    font-size: var(--text-base);
     line-height: 1.75;
   }
   #editor-preview :global(.md) {
@@ -729,8 +729,8 @@
   }
   #editor-preview :global(blockquote) {
     border-inline-start: 2px solid var(--border-strong);
-    padding: 8px 20px;
-    margin: 24px 0;
+    padding: var(--space-2) 20px;
+    margin: var(--space-5) 0;
     color: var(--muted);
   }
   /* Beside the folder tree the editor fills the pane: the text area takes the height the header leaves and scrolls its
@@ -785,18 +785,18 @@
   @media (max-width: 850px) {
     .editor-header {
       flex-direction: column;
-      gap: 4px;
-      margin-bottom: 12px;
+      gap: var(--space-1);
+      margin-bottom: var(--space-3);
     }
     .editor-header h1 {
-      font-size: 24px;
+      font-size: var(--text-heading);
     }
     .editor-toolbar {
-      gap: 8px;
+      gap: var(--space-2);
     }
     .editor-tabs button {
-      padding-inline: 8px;
-      font-size: 12px;
+      padding-inline: var(--space-2);
+      font-size: var(--text-2xs);
     }
     .save-action {
       padding-inline: 10px;
@@ -807,17 +807,17 @@
     }
     .editor-status {
       flex-wrap: wrap;
-      gap: 4px;
+      gap: var(--space-1);
       padding: 10px 0;
     }
     .editor-status > div {
-      gap: 4px 12px;
+      gap: var(--space-1) var(--space-3);
     }
     .editor-return {
       justify-content: start;
     }
     .formatting-tools button {
-      padding-inline: 8px;
+      padding-inline: var(--space-2);
     }
   }
   @media (max-width: 380px) {
@@ -830,7 +830,7 @@
       justify-self: start;
     }
     .editor-return {
-      gap: 4px 12px;
+      gap: var(--space-1) var(--space-3);
     }
   }
   @media (max-width: 650px) {

@@ -234,7 +234,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     width: 100%;
   }
   .bundle-title h3 {
@@ -245,7 +245,7 @@
   .bundle-title a {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex: none;
   }
   .bundle-badges {
@@ -256,25 +256,25 @@
   .bundle-card {
     min-width: 0;
     background: var(--surface);
-    padding: 24px;
-    border-radius: var(--radius-panel, 8px);
+    padding: var(--space-5);
+    border-radius: var(--radius);
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--space-4);
   }
   .card-head {
     flex-wrap: wrap;
-    gap: 8px 12px;
+    gap: var(--space-2) var(--space-3);
   }
   .card-head h3 {
     flex-basis: 100%;
-    font-size: 20px;
+    font-size: var(--text-lead);
   }
   .bundle-facts {
     display: grid;
     grid-template-columns: minmax(5rem, 0.25fr) minmax(0, 1fr);
-    gap: 8px 16px;
-    font-size: 14px;
+    gap: var(--space-2) var(--space-4);
+    font-size: var(--text-s);
     margin: 0;
   }
   .bundle-facts dt {
@@ -285,16 +285,16 @@
     overflow-wrap: anywhere;
   }
   .bundle-facts p {
-    margin: 4px 0;
+    margin: var(--space-1) 0;
   }
   .bundle-counts {
     display: flex;
     flex-wrap: wrap;
     list-style: none;
-    gap: 4px 16px;
+    gap: var(--space-1) var(--space-4);
     padding: 0;
     margin: 0;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .stacked-bar {
     height: 6px;
@@ -303,7 +303,7 @@
     border-radius: 3px;
   }
   .bundle-card h4 {
-    margin: 4px 0 0;
+    margin: var(--space-1) 0 0;
   }
   .bundle-card > p {
     margin: 0;
@@ -312,51 +312,51 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     margin-top: auto;
-    padding-top: 8px;
+    padding-top: var(--space-2);
   }
   .bundle-actions a,
   .manage-heading > a {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .bundle-management {
     max-width: 900px;
-    padding: 28px 32px;
-    gap: 24px;
+    padding: 28px var(--space-6);
+    gap: var(--space-5);
   }
   .manage-heading {
     display: flex;
     justify-content: space-between;
     align-items: start;
-    gap: 24px;
+    gap: var(--space-5);
   }
   .manage-heading h2 {
-    font-size: 24px;
+    font-size: var(--text-heading);
     margin: 0;
   }
   .manage-heading h2:focus {
     outline: 0;
   }
   .manage-heading p {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
     overflow-wrap: anywhere;
-    font-size: 14px;
+    font-size: var(--text-s);
   }
   .manage-heading > a {
     flex: none;
-    font-size: 14px;
+    font-size: var(--text-s);
   }
   .bundle-settings {
     display: grid;
-    gap: 24px;
+    gap: var(--space-5);
     margin: 0;
   }
   .setting-row p {
-    margin: 8px 0 0;
-    font-size: 14px;
+    margin: var(--space-2) 0 0;
+    font-size: var(--text-s);
     max-width: 65ch;
   }
   .check-label {
@@ -366,8 +366,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 24px;
-    padding-top: 8px;
+    gap: var(--space-5);
+    padding-top: var(--space-2);
   }
   .manage-save p {
     margin: 0;
@@ -379,19 +379,19 @@
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 16px 24px;
+    gap: var(--space-4) var(--space-5);
     border-top: 1px solid var(--border);
-    padding-top: 24px;
+    padding-top: var(--space-5);
     margin: 0;
   }
   .bundle-maintenance h3,
   .bundle-removal h3 {
-    font-size: 16px;
+    font-size: var(--text-base);
   }
   .bundle-maintenance p,
   .bundle-removal p {
-    font-size: 14px;
-    margin: 8px 0 0;
+    font-size: var(--text-s);
+    margin: var(--space-2) 0 0;
     max-width: 55ch;
   }
   .danger-action {
@@ -400,7 +400,7 @@
   .removal-confirmation {
     flex-basis: 100%;
     display: grid;
-    gap: 16px;
+    gap: var(--space-4);
   }
   .removal-confirmation .btn-row {
     justify-content: flex-end;

@@ -54,13 +54,13 @@
   .setup {
     max-width: 860px;
     margin: 0 auto;
-    padding: 8px 0 48px;
+    padding: var(--space-2) 0 var(--space-7);
   }
   .setup-heading h1 {
-    margin: 0 0 12px;
+    margin: 0 0 var(--space-3);
   }
   .setup-heading p {
-    margin: 0 0 24px;
+    margin: 0 0 var(--space-5);
     max-width: 68ch;
     line-height: 1.6;
   }

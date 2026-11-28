@@ -746,7 +746,7 @@
 <style>
   .retirement-receipt {
     max-width: 760px;
-    padding: 24px 0;
+    padding: var(--space-5) 0;
   }
   /* The page's heading in this state, at the size it had as a second-level heading. */
   .retirement-receipt h1 {
@@ -759,25 +759,25 @@
     line-height: 1.65;
   }
   .retirement-receipt h3 {
-    margin-top: 32px;
-    font-size: 15px;
+    margin-top: var(--space-6);
+    font-size: var(--text-m);
   }
   .retirement-receipt .page-actions {
     justify-content: flex-start;
-    margin-top: 24px;
-    gap: 12px;
+    margin-top: var(--space-5);
+    gap: var(--space-3);
   }
   .reader-navigation {
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin: 0 0 16px;
-    font-size: 13px;
+    gap: var(--space-4);
+    margin: 0 0 var(--space-4);
+    font-size: var(--text-xs);
   }
   .reader-navigation > a {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-height: var(--control-height, 40px);
     color: var(--muted);
     font-weight: 500;
@@ -787,13 +787,13 @@
     color: var(--text);
   }
   .asset-heading {
-    margin-bottom: 32px;
+    margin-bottom: var(--space-6);
   }
   .asset-title-row {
     display: flex;
     align-items: start;
     justify-content: space-between;
-    gap: 24px;
+    gap: var(--space-5);
   }
   .asset-heading h1 {
     font-size: clamp(26px, 2.5vw, 34px);
@@ -805,7 +805,7 @@
   .page-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex: none;
   }
   .page-actions > .btn {
@@ -818,9 +818,9 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 4px 20px;
-    margin-top: 12px;
-    font-size: 13px;
+    gap: var(--space-1) 20px;
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .asset-context > a {
@@ -849,14 +849,14 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 10px;
+    padding: var(--space-2) 10px;
     min-height: var(--control-height, 40px);
     border: 0;
     background: none;
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 500;
-    border-radius: 6px;
+    border-radius: var(--radius-small);
     anchor-name: --asset-actions;
   }
   .action-menu {
@@ -866,7 +866,7 @@
     position-try-fallbacks: flip-block, flip-inline;
     inset: auto;
     justify-self: end;
-    margin: 8px 0;
+    margin: var(--space-2) 0;
     width: 248px;
     max-width: calc(100vw - 24px);
     max-height: min(calc(100% - 16px), calc(100dvh - 24px));
@@ -875,21 +875,21 @@
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-popover);
   }
   /* Menu rows are shorter than buttons, so the eight items fit the native minimum window without a scrollbar. */
   .menu-reason {
     display: block;
-    padding: 0 12px 8px;
-    font-size: 12px;
+    padding: 0 var(--space-3) var(--space-2);
+    font-size: var(--text-2xs);
     color: var(--muted);
   }
   .action-menu button {
     display: flex;
     align-items: center;
     justify-content: start;
-    gap: 8px;
+    gap: var(--space-2);
     min-height: 32px;
     width: 100%;
     text-align: left;
@@ -897,7 +897,7 @@
     border: 0;
     color: var(--text);
     padding: 6px 10px;
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 400;
   }
   .menu-group + .menu-group {
@@ -908,7 +908,7 @@
   .menu-label {
     display: block;
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--text-3xs);
     padding: 6px 10px;
   }
   .action-menu button:hover {
@@ -920,7 +920,7 @@
   }
   .document-body {
     max-width: 76ch;
-    font-size: 16px;
+    font-size: var(--text-base);
     line-height: 1.75;
     margin: 0;
     min-width: 0;
@@ -932,65 +932,65 @@
   }
   .document-body :global(blockquote) {
     border-inline-start: 2px solid var(--border-strong);
-    padding: 8px 20px;
-    margin: 24px 0;
+    padding: var(--space-2) 20px;
+    margin: var(--space-5) 0;
     color: var(--muted);
   }
   .document-body :global(.markdown > p:first-child) {
     margin-top: 0;
   }
   .document-body :global(.markdown h2) {
-    margin-top: 32px;
+    margin-top: var(--space-6);
   }
   .view-heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     margin-bottom: 20px;
   }
   .view-heading h3 {
     margin: 0;
-    font-size: 20px;
+    font-size: var(--text-lead);
   }
   .text-action {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     background: none;
     border: 0;
     color: var(--accent);
-    font-size: 13px;
+    font-size: var(--text-xs);
     min-height: var(--control-height, 40px);
     padding: 6px 0;
   }
   .heading-navigation {
     border: 0;
     background: none;
-    margin: 0 0 24px;
+    margin: 0 0 var(--space-5);
     padding: 0;
   }
   .heading-navigation > summary {
     min-height: var(--control-height, 36px);
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     background: none;
     border: 0;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
   }
   .heading-navigation ul {
     list-style: none;
     padding: 0;
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
   }
   .heading-navigation li {
-    margin: 0 0 8px;
-    font-size: 13px;
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-xs);
     line-height: 1.5;
   }
   .heading-navigation a {
     display: block;
-    padding: 4px 0;
+    padding: var(--space-1) 0;
     color: var(--muted);
   }
   .heading-navigation a:hover {
@@ -1000,7 +1000,7 @@
     .reading-layout.has-outline {
       display: grid;
       grid-template-columns: minmax(0, 76ch) minmax(150px, 1fr);
-      gap: 48px;
+      gap: var(--space-7);
     }
     .document-body {
       grid-row: 1;
@@ -1016,7 +1016,7 @@
     }
     .heading-navigation > summary {
       font-weight: 600;
-      font-size: 12px;
+      font-size: var(--text-2xs);
     }
   }
   .raw-source {
@@ -1043,7 +1043,7 @@
   .feedback-history {
     margin-top: 40px;
     border-top: 1px solid var(--border);
-    padding-top: 24px;
+    padding-top: var(--space-5);
   }
   .feedback-history h3 {
     margin: 0;
@@ -1052,31 +1052,31 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 8px 20px;
+    gap: var(--space-2) 20px;
     max-width: 76ch;
     margin-top: 40px;
-    padding-top: 16px;
+    padding-top: var(--space-4);
     border-top: 1px solid var(--border);
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
   }
   .reading-feedback .text-action {
-    font-size: 12px;
+    font-size: var(--text-2xs);
   }
   .operation-notice {
-    font-size: 13px;
+    font-size: var(--text-xs);
     margin: 0 0 20px;
     color: var(--ok);
   }
   .operation-notice details {
-    margin-top: 12px;
+    margin-top: var(--space-3);
   }
   .asset-definition {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 12px 24px;
-    font-size: 13px;
-    margin: 0 0 32px;
+    gap: var(--space-3) var(--space-5);
+    font-size: var(--text-xs);
+    margin: 0 0 var(--space-6);
   }
   .asset-definition dt {
     color: var(--muted);
@@ -1088,18 +1088,18 @@
     max-width: 880px;
   }
   .asset-details > section {
-    margin-top: 32px;
+    margin-top: var(--space-6);
   }
   .asset-details h3 {
-    font-size: 17px;
-    margin: 0 0 16px;
+    font-size: var(--text-subtitle);
+    margin: 0 0 var(--space-4);
   }
   .asset-details h4 {
-    font-size: 14px;
-    margin: 24px 0 12px;
+    font-size: var(--text-s);
+    margin: var(--space-5) 0 var(--space-3);
   }
   .asset-details table {
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .history-list {
     list-style: none;
@@ -1107,42 +1107,42 @@
   }
   .history-list li {
     display: flex;
-    gap: 16px;
+    gap: var(--space-4);
     align-items: start;
     margin-bottom: 20px;
   }
   .history-list p {
-    margin: 4px 0;
+    margin: var(--space-1) 0;
   }
   @media (max-width: 850px) {
     .reader-navigation {
-      margin-bottom: 16px;
+      margin-bottom: var(--space-4);
     }
     .action-menu button {
       min-height: var(--control-height, 44px);
     }
     .asset-heading h1 {
-      font-size: 28px;
+      font-size: var(--text-title);
     }
     .asset-title-row {
       flex-wrap: wrap;
-      gap: 16px;
+      gap: var(--space-4);
     }
     .page-actions {
       margin-left: auto;
     }
     .asset-context {
-      gap: 4px 16px;
+      gap: var(--space-1) var(--space-4);
     }
     .asset-definition {
       grid-template-columns: 1fr;
-      gap: 4px;
+      gap: var(--space-1);
     }
     .asset-definition dd {
-      margin-bottom: 12px;
+      margin-bottom: var(--space-3);
     }
     .reading-feedback {
-      gap: 4px 16px;
+      gap: var(--space-1) var(--space-4);
     }
     .reading-feedback > span {
       flex-basis: 100%;

@@ -161,7 +161,7 @@
 <style>
   .related-tabs {
     display: flex;
-    gap: 24px;
+    gap: var(--space-5);
     border-bottom: 1px solid var(--border);
     margin-bottom: 20px;
   }
@@ -170,7 +170,7 @@
     border-radius: 0;
     background: none;
     color: var(--muted);
-    padding: 12px 0;
+    padding: var(--space-3) 0;
     border-bottom: 2px solid transparent;
     font-weight: 600;
     min-height: 40px;
@@ -183,13 +183,13 @@
     margin: 28px 0;
   }
   .connection-group h4 {
-    font-size: 14px;
-    margin-bottom: 8px;
+    font-size: var(--text-s);
+    margin-bottom: var(--space-2);
   }
   .connection-group h4 span {
     font-weight: 400;
     color: var(--muted);
-    margin-left: 12px;
+    margin-left: var(--space-3);
   }
   .related-list {
     list-style: none;
@@ -210,7 +210,7 @@
     overflow-wrap: anywhere;
   }
   .related-list a strong {
-    font-size: 15px;
+    font-size: var(--text-m);
     font-weight: 550;
   }
   .related-list .missing {
@@ -220,18 +220,18 @@
     color: var(--muted);
   }
   .related-list .missing strong {
-    font-size: 15px;
+    font-size: var(--text-m);
     font-weight: 550;
   }
   .related-list .missing span {
     display: block;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     margin-top: 5px;
   }
   .related-list a span {
     display: block;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--text-2xs);
     margin-top: 5px;
   }
   .related-list button {
@@ -242,7 +242,7 @@
     min-height: 40px;
   }
   .score {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
     white-space: nowrap;
   }
@@ -254,8 +254,8 @@
   .similar-toolbar {
     display: flex;
     align-items: center;
-    gap: 32px;
-    margin: 0 0 16px;
+    gap: var(--space-6);
+    margin: 0 0 var(--space-4);
   }
   .similar-toolbar p {
     flex: 1;
@@ -264,12 +264,12 @@
   .similar-toolbar .map-option {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
     white-space: nowrap;
   }
   .similar-toolbar label {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
     display: grid;
     gap: 6px;
@@ -279,11 +279,11 @@
     .similar-toolbar {
       align-items: stretch;
       flex-direction: column;
-      gap: 12px;
+      gap: var(--space-3);
     }
     .related-list li {
       flex-wrap: wrap;
-      gap: 12px;
+      gap: var(--space-3);
     }
     .related-list a {
       flex-basis: 100%;

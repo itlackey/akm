@@ -899,16 +899,16 @@
     flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
-    gap: 1rem;
-    padding-block: 1rem;
+    gap: var(--space-4);
+    padding-block: var(--space-4);
     border-bottom: 1px solid var(--border);
   }
   .health-overview strong {
-    font-size: 1.125rem;
+    font-size: var(--text-l);
   }
   .health-overview p {
     margin: 0;
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   /* Prose keeps a readable measure on a wide monitor instead of running edge to edge. */
@@ -918,11 +918,11 @@
     max-width: 75ch;
   }
   .attention {
-    margin-block: 2rem;
+    margin-block: var(--space-6);
   }
   .attention h2 {
-    font-size: 1.125rem;
-    margin-block: 0 1rem;
+    font-size: var(--text-l);
+    margin-block: 0 var(--space-4);
   }
   .attention-list {
     list-style: none;
@@ -937,37 +937,37 @@
     grid-template-columns: 0.65rem minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.875rem;
-    padding: 1rem 0;
+    padding: var(--space-4) 0;
     text-decoration: none;
     color: var(--text);
-    font-size: 0.875rem;
+    font-size: var(--text-s);
   }
   .attention-list a:hover {
     color: var(--accent);
   }
   .attention-action {
     color: var(--accent);
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-2);
   }
   .attention-group {
-    margin-block: 1.5rem;
+    margin-block: var(--space-5);
   }
   .attention-group h3 {
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     color: var(--muted);
     margin: 0;
   }
   .check-group {
-    margin-block: 1.5rem;
+    margin-block: var(--space-5);
   }
   .check-group h3 {
-    font-size: 0.875rem;
+    font-size: var(--text-s);
     display: flex;
-    gap: 0.75rem;
-    margin: 0 0 0.5rem;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-2);
   }
   .checks {
     list-style: none;
@@ -977,10 +977,10 @@
   .check {
     display: grid;
     grid-template-columns: minmax(10rem, 24%) minmax(0, 1fr);
-    gap: 0.5rem 1.5rem;
-    padding: 0.75rem 0;
+    gap: var(--space-2) var(--space-5);
+    padding: var(--space-3) 0;
     border-bottom: 1px solid var(--border);
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
   }
   .check-name {
     overflow-wrap: anywhere;
@@ -1009,8 +1009,8 @@
   }
   .coverage {
     color: var(--muted);
-    font-size: 0.8125rem;
-    margin-block: 2rem;
+    font-size: var(--text-xs);
+    margin-block: var(--space-6);
   }
   .coverage h3 {
     font-size: inherit;
@@ -1020,7 +1020,7 @@
     padding-left: 1.25rem;
   }
   .return-action {
-    margin-bottom: 1rem;
+    margin-bottom: var(--space-4);
   }
   .signal {
     block-size: 0.5rem;
@@ -1037,21 +1037,21 @@
   .metric-summary {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem 2rem;
-    padding: 1rem 0;
-    margin-bottom: 1.5rem;
+    gap: var(--space-4) var(--space-6);
+    padding: var(--space-4) 0;
+    margin-bottom: var(--space-5);
     border-block: 1px solid var(--border);
-    font-size: 0.875rem;
+    font-size: var(--text-s);
   }
   .metric-summary strong {
     font-variant-numeric: tabular-nums;
   }
   .weekly-context {
-    margin: 0 0 1.5rem;
+    margin: 0 0 var(--space-5);
     display: grid;
     grid-template-columns: 7rem minmax(0, 1fr);
-    gap: 1rem;
-    font-size: 0.8125rem;
+    gap: var(--space-4);
+    font-size: var(--text-xs);
   }
   .weekly-context h2 {
     font-size: inherit;
@@ -1060,18 +1060,18 @@
   }
   .weekly-values {
     display: flex;
-    gap: 1rem 2rem;
+    gap: var(--space-4) var(--space-6);
     flex-wrap: wrap;
   }
   .weekly-values p {
     display: grid;
-    gap: 0.25rem;
+    gap: var(--space-1);
     margin: 0;
   }
   .improve-line {
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     color: var(--muted);
-    margin-block: 1rem 2rem;
+    margin-block: var(--space-4) var(--space-6);
     border: 0;
     padding: 0;
     background: none;
@@ -1079,9 +1079,9 @@
   }
   .task-lookup {
     display: flex;
-    gap: 0.75rem;
+    gap: var(--space-3);
     align-items: end;
-    margin: 1.5rem 0;
+    margin: var(--space-5) 0;
     flex-wrap: wrap;
   }
   .task-lookup label {
@@ -1089,17 +1089,17 @@
     gap: 0.4rem;
   }
   .activity-section {
-    margin-block: 2rem;
+    margin-block: var(--space-6);
   }
   .activity-section h2 {
-    font-size: 1.125rem;
+    font-size: var(--text-l);
   }
   .drill-panel {
-    padding: 1.5rem;
+    padding: var(--space-5);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface);
-    margin-block: 1.5rem;
+    margin-block: var(--space-5);
   }
   .table-wrap {
     overflow-x: auto;
@@ -1109,11 +1109,11 @@
     overflow: auto;
   }
   .chart-grid {
-    gap: 2rem;
+    gap: var(--space-6);
   }
   .chart-wide {
     display: grid;
-    gap: 2rem;
+    gap: var(--space-6);
   }
   @media (max-width: 760px) {
     .attention-list a {
@@ -1131,7 +1131,7 @@
     }
     .weekly-context {
       grid-template-columns: 1fr;
-      gap: 0.5rem;
+      gap: var(--space-2);
     }
   }
 </style>

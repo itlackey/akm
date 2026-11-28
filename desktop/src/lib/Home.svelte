@@ -269,7 +269,7 @@
   .home-page {
     max-width: 1160px;
     margin: 0 auto;
-    padding: 8px 0 24px;
+    padding: var(--space-2) 0 var(--space-5);
   }
   .home-page :is(h2, h3, p, figure) {
     margin: 0;
@@ -278,21 +278,21 @@
     margin: 0;
   }
   .home-page h2 {
-    font-size: 18px;
+    font-size: var(--text-l);
     line-height: 1.4;
     letter-spacing: -0.015em;
   }
   .home-page h3 {
-    font-size: 15px;
+    font-size: var(--text-m);
     line-height: 1.45;
     font-weight: 600;
     letter-spacing: 0;
   }
   .home-setup {
     display: grid;
-    gap: 16px;
+    gap: var(--space-4);
     justify-items: start;
-    padding: 8px 0;
+    padding: var(--space-2) 0;
   }
   .home-setup p {
     max-width: 60ch;
@@ -302,21 +302,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     flex-wrap: wrap;
-    margin-bottom: 32px;
+    margin-bottom: var(--space-6);
   }
   .home-heading p {
-    margin-top: 8px;
+    margin-top: var(--space-2);
   }
   .home-columns {
     display: grid;
     grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
-    gap: 32px;
+    gap: var(--space-6);
   }
   .home-attention {
-    padding: 24px;
-    border-radius: 12px;
+    padding: var(--space-5);
+    border-radius: var(--radius-large);
     background: var(--surface);
     align-self: start;
   }
@@ -324,14 +324,14 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
   }
   .home-pruned {
-    margin-bottom: 16px;
+    margin-bottom: var(--space-4);
   }
   .home-count {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     background: var(--surface-2);
     padding: 2px 7px;
@@ -345,16 +345,16 @@
   .home-concerns li {
     display: grid;
     grid-template-columns: 32px minmax(0, 1fr) auto;
-    gap: 12px;
+    gap: var(--space-3);
     align-items: start;
-    padding: 24px 0;
+    padding: var(--space-5) 0;
     border-top: 1px solid var(--border);
   }
   .home-concerns li:last-child {
-    padding-bottom: 8px;
+    padding-bottom: var(--space-2);
   }
   .home-concern-copy p {
-    font-size: 13px;
+    font-size: var(--text-xs);
     line-height: 1.55;
     color: var(--muted);
     margin-top: 6px;
@@ -383,16 +383,16 @@
   .home-health-link {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-height: 32px;
     text-decoration: none;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--text-xs);
     font-weight: 550;
   }
   .home-detail-link {
     white-space: nowrap;
-    padding: 4px 0;
+    padding: var(--space-1) 0;
   }
   .home-page a:hover {
     color: var(--link);
@@ -403,18 +403,18 @@
   }
   .home-shortcuts {
     display: grid;
-    gap: 4px;
-    margin-top: 16px;
+    gap: var(--space-1);
+    margin-top: var(--space-4);
   }
   .home-shortcuts a {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 8px;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-2);
     min-height: 48px;
     color: var(--text);
     text-decoration: none;
-    border-radius: 8px;
+    border-radius: var(--radius);
   }
   .home-shortcuts a:hover {
     background: var(--surface-2);
@@ -425,19 +425,19 @@
   }
   .home-glance {
     border-top: 1px solid var(--border);
-    padding-top: 24px;
-    margin-top: 24px;
+    padding-top: var(--space-5);
+    margin-top: var(--space-5);
   }
   .home-glance dl {
     display: grid;
-    gap: 16px;
-    margin: 20px 0 12px;
-    font-size: 13px;
+    gap: var(--space-4);
+    margin: 20px 0 var(--space-3);
+    font-size: var(--text-xs);
   }
   .home-glance dl div {
     display: flex;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
   }
   .home-glance dt {
     font-weight: 400;
@@ -451,62 +451,62 @@
   .home-bottom {
     display: grid;
     grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-    gap: 32px;
+    gap: var(--space-6);
     margin-top: 40px;
   }
   .home-review {
     border-left: 1px solid var(--border);
-    padding: 8px 0 8px 32px;
+    padding: var(--space-2) 0 var(--space-2) var(--space-6);
     display: flex;
     align-items: flex-start;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
     justify-content: center;
   }
   .home-kicker {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
   }
   .home-review p {
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--text-xs);
     max-width: 30ch;
   }
   .home-review a.btn {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    margin-top: 4px;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
     text-decoration: none;
   }
   .home-review a.btn:not(.btn-secondary):hover {
     color: var(--on-accent);
   }
   .home-runs {
-    padding-top: 12px;
+    padding-top: var(--space-3);
   }
   .home-run-totals {
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
-    font-size: 13px;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .home-run-totals strong {
-    font-size: 24px;
+    font-size: var(--text-heading);
     letter-spacing: -0.02em;
     font-weight: 600;
     color: var(--text);
-    margin-right: 4px;
+    margin-right: var(--space-1);
     font-variant-numeric: tabular-nums;
   }
   .home-run-bar {
     display: flex;
-    gap: 4px;
+    gap: var(--space-1);
     height: 28px;
     border-radius: 5px;
     overflow: hidden;
-    margin: 20px 0 16px;
+    margin: 20px 0 var(--space-4);
     background: var(--surface-2);
   }
   .home-runs .completed {
@@ -520,11 +520,11 @@
   }
   .home-run-legend {
     display: flex;
-    gap: 16px;
+    gap: var(--space-4);
     flex-wrap: wrap;
-    font-size: 12px;
+    font-size: var(--text-2xs);
     color: var(--muted);
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
   }
   .home-run-legend span {
     display: flex;
@@ -538,42 +538,42 @@
   }
   .home-no-runs {
     color: var(--muted);
-    font-size: 14px;
-    padding: 24px 0;
+    font-size: var(--text-s);
+    padding: var(--space-5) 0;
     max-width: 46ch;
   }
   .home-empty {
-    padding: 24px 0;
+    padding: var(--space-5) 0;
   }
   .home-empty > :global(svg) {
     color: var(--muted);
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
   }
   .home-empty p {
-    font-size: 14px;
+    font-size: var(--text-s);
     color: var(--muted);
-    margin: 8px 0 16px;
+    margin: var(--space-2) 0 var(--space-4);
     max-width: 48ch;
   }
   .home-empty a {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-height: 32px;
-    font-size: 14px;
+    font-size: var(--text-s);
   }
   .home-coverage {
     padding-top: 20px;
     border-top: 1px solid var(--border);
     margin-top: 20px;
-    font-size: 13px;
+    font-size: var(--text-xs);
   }
   .home-coverage p {
     color: var(--muted);
-    margin-top: 4px;
+    margin-top: var(--space-1);
   }
   .home-coverage button {
-    margin-top: 8px;
+    margin-top: var(--space-2);
   }
   @media (max-width: 1050px) {
     .home-concerns li {
@@ -585,14 +585,14 @@
     }
     .home-columns {
       grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
-      gap: 24px;
+      gap: var(--space-5);
     }
   }
   @media (max-width: 700px) {
     .home-columns,
     .home-bottom {
       grid-template-columns: 1fr;
-      gap: 32px;
+      gap: var(--space-6);
     }
     .home-heading {
       align-items: flex-start;
@@ -601,18 +601,18 @@
       padding: 20px;
     }
     .home-review {
-      padding: 24px 0 0;
+      padding: var(--space-5) 0 0;
       border-left: 0;
       border-top: 1px solid var(--border);
     }
     .home-bottom {
-      margin-top: 32px;
+      margin-top: var(--space-6);
     }
     .home-heading p {
-      font-size: 12px;
+      font-size: var(--text-2xs);
     }
     .home-section-title {
-      gap: 8px;
+      gap: var(--space-2);
     }
   }
 </style>

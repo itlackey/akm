@@ -81,7 +81,7 @@
   .proposal-location {
     display: flex;
     align-items: center;
-    gap: 0.5rem 1rem;
+    gap: var(--space-2) var(--space-4);
     flex-wrap: wrap;
   }
   .proposal-title h2 {

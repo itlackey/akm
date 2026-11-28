@@ -83,12 +83,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
+    gap: var(--space-5);
   }
   .actions {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--space-4);
   }
   /* The page's heading, at the size it had as a second-level heading. */
   h1 {

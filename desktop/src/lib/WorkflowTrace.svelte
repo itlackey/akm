@@ -207,7 +207,7 @@
   .trace-head {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 12px;
+    gap: var(--space-2) var(--space-3);
     align-items: baseline;
   }
   .trace-head h2 {
@@ -215,11 +215,11 @@
   }
   .steps {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     overflow-x: auto;
     list-style: none;
     padding: 0;
-    margin: 12px 0;
+    margin: var(--space-3) 0;
   }
   .steps li {
     flex: 1 1 0;
@@ -247,7 +247,7 @@
     overflow-x: auto;
   }
   svg text {
-    font-size: 12px;
+    font-size: var(--text-2xs);
     fill: var(--text);
   }
   .tick {
@@ -271,7 +271,7 @@
     fill: var(--accent-bg);
   }
   .row:focus-visible {
-    outline: 2px solid var(--link);
+    outline: var(--focus-ring);
   }
   .bar.ok {
     fill: var(--ok);
@@ -300,7 +300,7 @@
     gap: 6px 18px;
     list-style: none;
     padding: 0;
-    font-size: 13px;
+    font-size: var(--text-xs);
     color: var(--muted);
   }
   .key li {
@@ -328,7 +328,7 @@
   .unit-detail dl {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 2px 12px;
+    gap: 2px var(--space-3);
   }
   .unit-detail dd {
     margin: 0;

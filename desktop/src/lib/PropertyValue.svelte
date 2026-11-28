@@ -31,7 +31,7 @@
   .property-map {
     display: grid;
     grid-template-columns: max-content 1fr;
-    gap: 2px 12px;
+    gap: 2px var(--space-3);
     margin: 0;
   }
   .property-map dd {

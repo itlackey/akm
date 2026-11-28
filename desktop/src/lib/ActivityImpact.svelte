@@ -526,15 +526,15 @@
   .process-control {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
   }
   .process-comparison {
-    margin-top: 2rem;
+    margin-top: var(--space-6);
   }
   .measurement-note {
     color: var(--muted);
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
     max-width: 85ch;
     line-height: 1.6;
   }
@@ -542,7 +542,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem 1.25rem;
-    margin-block: 1rem;
+    margin-block: var(--space-4);
   }
   .impact-sections {
     display: grid;
@@ -555,7 +555,7 @@
     border: 1px solid var(--border);
     background: var(--surface);
     border-radius: var(--radius);
-    padding: 1rem;
+    padding: var(--space-4);
   }
   .change-list li {
     flex-wrap: wrap;

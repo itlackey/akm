@@ -135,26 +135,26 @@
 <style>
   .item {
     margin: 20px 0;
-    padding: 16px 20px;
+    padding: var(--space-4) 20px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
   }
   .item h3 {
-    margin: 0 0 8px;
-    font-size: 16px;
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-base);
   }
   .item p {
-    margin: 8px 0;
+    margin: var(--space-2) 0;
   }
   .learn-where {
-    margin: 12px 0 0;
+    margin: var(--space-3) 0 0;
     padding: 0;
     border: 0;
   }
   .learn-field {
     display: grid;
-    gap: 4px;
-    margin: 8px 0;
+    gap: var(--space-1);
+    margin: var(--space-2) 0;
     max-width: 480px;
   }
 </style>

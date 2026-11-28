@@ -673,13 +673,13 @@
   }
   .bundle-section:not(.manage-view) .settings-intro p {
     max-width: none;
-    margin-top: 8px;
+    margin-top: var(--space-2);
   }
   .page-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     flex-wrap: wrap;
     margin-bottom: 20px;
   }
@@ -692,9 +692,9 @@
   .bundle-back {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    margin: 12px 0 20px;
-    font-size: 14px;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 20px;
+    font-size: var(--text-s);
   }
   .bundle-panels {
     display: grid;
@@ -718,7 +718,7 @@
     display: grid;
     grid-template-columns: 190px minmax(0, 760px);
     justify-content: center;
-    gap: 48px;
+    gap: var(--space-7);
     align-items: start;
     margin-top: 28px;
   }
@@ -728,16 +728,16 @@
   }
   .configuration-navigation nav {
     display: grid;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .configuration-navigation a {
     display: flex;
     justify-content: space-between;
     text-decoration: none;
     color: var(--muted);
-    padding: 10px 12px;
+    padding: 10px var(--space-3);
     border-radius: var(--radius);
-    font-size: 14px;
+    font-size: var(--text-s);
     line-height: 1.4;
   }
   .configuration-navigation a[aria-current="page"] {
@@ -779,7 +779,7 @@
     gap: 26px;
   }
   .configuration-group .settings-footer {
-    margin-top: 32px;
+    margin-top: var(--space-6);
     padding-top: 20px;
   }
   .configuration-group .settings-intro p {
@@ -792,7 +792,7 @@
     gap: 20px;
   }
   .settings-receipt ul {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
     padding-left: 20px;
     overflow-wrap: anywhere;
   }
@@ -802,7 +802,7 @@
   @media (max-width: 850px) {
     .configuration-workspace {
       grid-template-columns: 1fr;
-      gap: 24px;
+      gap: var(--space-5);
     }
     .configuration-navigation {
       position: static;
@@ -812,14 +812,14 @@
     }
     .configuration-select {
       display: grid;
-      gap: 8px;
+      gap: var(--space-2);
     }
     .configuration-select select {
       width: 100%;
     }
     .configuration-group .settings-footer {
       align-items: start;
-      gap: 16px;
+      gap: var(--space-4);
       flex-wrap: wrap;
     }
     .settings-receipt {
@@ -829,9 +829,9 @@
   .settings-tabs {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 1.25rem;
-    margin-bottom: 1rem;
-    padding-bottom: 0.75rem;
+    gap: var(--space-1) 1.25rem;
+    margin-bottom: var(--space-4);
+    padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--border);
   }
   .settings-tabs a {
@@ -860,7 +860,7 @@
   }
   .settings-tabs a.active {
     color: var(--text);
-    box-shadow: 0 2px var(--accent);
+    box-shadow: var(--edge-tab);
   }
   .settings-section {
     min-width: 0;
@@ -868,7 +868,7 @@
   .index-facts {
     display: grid;
     grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr);
-    gap: 0.5rem 1rem;
+    gap: var(--space-2) var(--space-4);
   }
   .index-facts dd {
     margin: 0;
@@ -878,7 +878,7 @@
     color: var(--muted);
   }
   .effective-config {
-    margin-block: 2rem;
+    margin-block: var(--space-6);
   }
   .table-wrap {
     overflow-x: auto;
@@ -887,7 +887,7 @@
     min-width: 0;
   }
   .settings-footer {
-    gap: 0.75rem;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
   .configuration-group .settings-fields {
@@ -895,11 +895,11 @@
     gap: 22px;
   }
   .configuration-group .settings-intro {
-    margin-bottom: 24px;
+    margin-bottom: var(--space-5);
   }
   .configuration-group .settings-footer {
-    margin-top: 24px;
-    padding: 16px 0 0;
+    margin-top: var(--space-5);
+    padding: var(--space-4) 0 0;
   }
   .config-location {
     margin-bottom: 20px;

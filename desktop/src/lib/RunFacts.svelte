@@ -65,17 +65,17 @@
   .facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
-    gap: 1.5rem;
-    margin-block: 1rem;
+    gap: var(--space-5);
+    margin-block: var(--space-4);
   }
   .facts h3 {
-    margin: 0 0 0.5rem;
-    font-size: 1rem;
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-base);
   }
   .usage {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-2);
   }
   .usage-bar {
     block-size: 0.5rem;

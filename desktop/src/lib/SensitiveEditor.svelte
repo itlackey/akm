@@ -222,20 +222,20 @@
   }
   /* The page's heading, with the line height and spacing it had as a second-level heading. */
   .sensitive-editor h1 {
-    font-size: 24px;
+    font-size: var(--text-heading);
     line-height: inherit;
     letter-spacing: var(--tracking-snug);
     margin: 0;
   }
   .sensitive-editor header {
-    margin-bottom: 24px;
+    margin-bottom: var(--space-5);
   }
   .sensitive-editor header p {
     margin-top: 10px;
   }
   .sensitive-editor form {
     display: grid;
-    gap: 24px;
+    gap: var(--space-5);
   }
   .sensitive-editor textarea {
     font-family: var(--mono);
@@ -247,7 +247,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     flex-wrap: wrap;
   }
   .sensitive-editor .btn-row {
@@ -256,14 +256,14 @@
   dialog {
     max-width: 460px;
     width: calc(100vw - 32px);
-    padding: 24px;
+    padding: var(--space-5);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius);
     background: var(--surface);
     color: var(--text);
   }
   dialog::backdrop {
-    background: rgb(0 0 0 / 0.4);
+    background: var(--scrim);
   }
   dialog p {
     line-height: 1.6;
